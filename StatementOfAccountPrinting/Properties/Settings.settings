@@ -8,5 +8,8 @@
     <Setting Name="PaperSize" Type="System.String" Scope="User">
       <Value Profile="(Default)">A4</Value>
     </Setting>
+	<Setting Name="ExportFormat" Type="System.String" Scope="User">
+		<Value Profile="(Default)">PDF</Value>
+	</Setting>
   </Settings>
 </SettingsFile>

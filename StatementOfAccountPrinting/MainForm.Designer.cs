@@ -28,6 +28,7 @@ partial class MainForm
         tabPage1 = new TabPage();
         tabPage2 = new TabPage();
         btnBlockFilter = new Button();
+        btnPrintSelected = new Button();
         menuStrip1.SuspendLayout();
         tabBlocks.SuspendLayout();
         SuspendLayout();
@@ -58,11 +59,12 @@ partial class MainForm
         // 
         // btnPrintPdf
         // 
+        btnPrintPdf.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         btnPrintPdf.Enabled = false;
-        btnPrintPdf.Location = new Point(614, 26);
+        btnPrintPdf.Location = new Point(634, 26);
         btnPrintPdf.Margin = new Padding(3, 2, 3, 2);
         btnPrintPdf.Name = "btnPrintPdf";
-        btnPrintPdf.Size = new Size(140, 33);
+        btnPrintPdf.Size = new Size(116, 33);
         btnPrintPdf.TabIndex = 3;
         btnPrintPdf.Text = "Export as PDF";
         btnPrintPdf.UseVisualStyleBackColor = true;
@@ -154,21 +156,35 @@ partial class MainForm
         // 
         // btnBlockFilter
         // 
+        btnBlockFilter.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         btnBlockFilter.Enabled = false;
-        btnBlockFilter.Location = new Point(472, 26);
+        btnBlockFilter.Location = new Point(512, 26);
         btnBlockFilter.Margin = new Padding(3, 2, 3, 2);
         btnBlockFilter.Name = "btnBlockFilter";
-        btnBlockFilter.Size = new Size(140, 33);
+        btnBlockFilter.Size = new Size(116, 33);
         btnBlockFilter.TabIndex = 13;
-        btnBlockFilter.Text = "Blocks *";
+        btnBlockFilter.Text = "Blocks (All)";
         btnBlockFilter.UseVisualStyleBackColor = true;
         btnBlockFilter.Click += btnBlockFilter_Click;
+        // 
+        // btnPrintSelected
+        // 
+        btnPrintSelected.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        btnPrintSelected.Enabled = false;
+        btnPrintSelected.Location = new Point(374, 26);
+        btnPrintSelected.Margin = new Padding(3, 2, 3, 2);
+        btnPrintSelected.Name = "btnPrintSelected";
+        btnPrintSelected.Size = new Size(116, 33);
+        btnPrintSelected.TabIndex = 14;
+        btnPrintSelected.Text = "Print Selected";
+        btnPrintSelected.UseVisualStyleBackColor = true;
         // 
         // MainForm
         // 
         AutoScaleDimensions = new SizeF(7F, 15F);
         AutoScaleMode = AutoScaleMode.Font;
         ClientSize = new Size(765, 361);
+        Controls.Add(btnPrintSelected);
         Controls.Add(btnBlockFilter);
         Controls.Add(tabBlocks);
         Controls.Add(lblStatus);
@@ -209,4 +225,5 @@ partial class MainForm
     private ToolStripMenuItem settingsToolStripMenuItem;
     private ToolStripMenuItem exitToolStripMenuItem;
     private Button btnBlockFilter;
+    private Button btnPrintSelected;
 }

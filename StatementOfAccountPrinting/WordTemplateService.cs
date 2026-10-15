@@ -2,13 +2,14 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using StatementOfAccountPrinting;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-
-// ✅ Alias only the Wordprocessing Text class to avoid ambiguity
+using WBreak = DocumentFormat.OpenXml.Wordprocessing.Break;
+using WParagraph = DocumentFormat.OpenXml.Wordprocessing.Paragraph;
+using WRun = DocumentFormat.OpenXml.Wordprocessing.Run;
+using WRunProperties = DocumentFormat.OpenXml.Wordprocessing.RunProperties;
+// ── Aliases to prevent ambiguity with any other OpenXml namespace ──
 using WText = DocumentFormat.OpenXml.Wordprocessing.Text;
+using WUnderline = DocumentFormat.OpenXml.Wordprocessing.Underline;
+using WUnderlineValues = DocumentFormat.OpenXml.Wordprocessing.UnderlineValues;
 
 public static class WordTemplateService
 {
@@ -51,14 +52,36 @@ public static class WordTemplateService
             TemplateFileName);
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // GENERATE WORD (fill template with account)
-    // ═════════════════════════════════════════════════════════════
-    public static void GenerateWord(string outputPath, CemeteryLotAccount account)
+    public static void GenerateCombinedWord(string outputPath, List<CemeteryLotAccount> accounts, string paperSize)
     {
-        if (account == null) throw new ArgumentNullException(nameof(account));
+        if (accounts == null || accounts.Count == 0)
+            throw new ArgumentException("No accounts to generate.", nameof(accounts));
 
         var templatePath = ResolveTemplatePath();
+
+        using (WordprocessingDocument templateDoc = WordprocessingDocument.Open(templatePath, true))
+        {
+            foreach (var section in templateDoc.MainDocumentPart.Document
+                         .Body.Elements<SectionProperties>())
+            {
+                var pageSize = section.GetFirstChild<PageSize>();
+
+                if (pageSize == null)
+                {
+                    pageSize = new PageSize();
+                    section.Append(pageSize);
+                }
+
+                (pageSize.Width, pageSize.Height) = paperSize switch
+                {
+                    "Legal" => (12240U, 20160U),
+                    "A4" => (11906U, 16838U),
+                    _ => (11906U, 16838U)
+                };
+            }
+
+            templateDoc.MainDocumentPart.Document.Save();
+        }
 
         if (File.Exists(outputPath)) File.Delete(outputPath);
         File.Copy(templatePath, outputPath, overwrite: true);
@@ -66,55 +89,60 @@ public static class WordTemplateService
         using var doc = WordprocessingDocument.Open(outputPath, isEditable: true);
         var main = doc.MainDocumentPart!;
         var body = main.Document.Body!;
-        var map = ToPlaceholders(account);
 
-        // Body
-        foreach (var para in body.Descendants<Paragraph>())
-        {
-            var paraText = string.Concat(para.Descendants<WText>().Select(t => t.Text));
-            if (paraText.Contains("{{"))
-            {
-                FlattenRuns(para);
-                ReplaceTokens(para, map);
-            }
-        }
+        // 1) Capture the original body content
+        var originalChildren = body.ChildElements
+            .Select(e => e.CloneNode(true))
+            .ToList();
 
-        // Headers
-        foreach (var hp in main.HeaderParts)
+        // 2) Clear the body
+        body.RemoveAllChildren();
+
+        // 3) For each account, append a filled clone of the template body
+        for (int i = 0; i < accounts.Count; i++)
         {
-            foreach (var para in hp.Header.Descendants<Paragraph>())
+            var account = accounts[i];
+            var map = ToPlaceholders(account);
+
+            foreach (var node in originalChildren)
             {
-                var t = string.Concat(para.Descendants<WText>().Select(x => x.Text));
-                if (t.Contains("{{"))
+                var clone = node.CloneNode(true);
+
+                // Collect the node itself (if it's a paragraph) plus any descendant paragraphs
+                var allParagraphs = clone.Descendants<WParagraph>().ToList();
+                if (clone is WParagraph self)
+                    allParagraphs.Insert(0, self);
+
+                foreach (var para in allParagraphs)
                 {
-                    FlattenRuns(para);
+                    // Only flatten when the paragraph contains a placeholder.
+                    // Paragraphs without placeholders keep their original runs and formatting.
+                    var text = string.Concat(para.Descendants<WText>().Select(t => t.Text));
+                    if (!text.Contains("{{"))
+                        continue;
+
+                    // Only flatten when there's more than one run
+                    // (a single run has no split placeholders to merge)
+                    if (para.Elements<WRun>().Count() > 1)
+                        FlattenRuns(para);
+
                     ReplaceTokens(para, map);
                 }
-            }
-            hp.Header.Save();
-        }
 
-        // Footers
-        foreach (var fp in main.FooterParts)
-        {
-            foreach (var para in fp.Footer.Descendants<Paragraph>())
-            {
-                var t = string.Concat(para.Descendants<WText>().Select(x => x.Text));
-                if (t.Contains("{{"))
-                {
-                    FlattenRuns(para);
-                    ReplaceTokens(para, map);
-                }
+                body.AppendChild(clone);
             }
-            fp.Footer.Save();
+
+            // 4) Page break between accounts (not after the last one)
+            if (i < accounts.Count - 1)
+            {
+                body.AppendChild(new WParagraph(
+                    new WRun(new WBreak { Type = BreakValues.Page })));
+            }
         }
 
         main.Document.Save();
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // FILL TEMPLATE (template path + account + output path)
-    // ═════════════════════════════════════════════════════════════
     public static void FillTemplate(string templatePath, CemeteryLotAccount account, string outputPath)
     {
         if (account == null) throw new ArgumentNullException(nameof(account));
@@ -128,27 +156,19 @@ public static class WordTemplateService
         var map = ToPlaceholders(account);
 
         // Body
-        foreach (var para in body.Descendants<Paragraph>())
+        foreach (var para in body.Descendants<WParagraph>())
         {
-            var paraText = string.Concat(para.Descendants<WText>().Select(t => t.Text));
-            if (paraText.Contains("{{"))
-            {
-                FlattenRuns(para);
-                ReplaceTokens(para, map);
-            }
+            FlattenRuns(para);
+            ReplaceTokens(para, map);
         }
 
         // Headers
         foreach (var hp in main.HeaderParts)
         {
-            foreach (var para in hp.Header.Descendants<Paragraph>())
+            foreach (var para in hp.Header.Descendants<WParagraph>())
             {
-                var t = string.Concat(para.Descendants<WText>().Select(x => x.Text));
-                if (t.Contains("{{"))
-                {
-                    FlattenRuns(para);
-                    ReplaceTokens(para, map);
-                }
+                FlattenRuns(para);
+                ReplaceTokens(para, map);
             }
             hp.Header.Save();
         }
@@ -156,14 +176,10 @@ public static class WordTemplateService
         // Footers
         foreach (var fp in main.FooterParts)
         {
-            foreach (var para in fp.Footer.Descendants<Paragraph>())
+            foreach (var para in fp.Footer.Descendants<WParagraph>())
             {
-                var t = string.Concat(para.Descendants<WText>().Select(x => x.Text));
-                if (t.Contains("{{"))
-                {
-                    FlattenRuns(para);
-                    ReplaceTokens(para, map);
-                }
+                FlattenRuns(para);
+                ReplaceTokens(para, map);
             }
             fp.Footer.Save();
         }
@@ -171,9 +187,6 @@ public static class WordTemplateService
         main.Document.Save();
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // CREATE TEMPLATE (blank copy)
-    // ═════════════════════════════════════════════════════════════
     public static void CreateTemplate(string outputPath)
     {
         var templatePath = ResolveTemplatePath();
@@ -188,9 +201,6 @@ public static class WordTemplateService
         File.Copy(templatePath, outputPath, overwrite: true);
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // CREATE TEMPLATE (copy + fill with account)
-    // ═════════════════════════════════════════════════════════════
     public static void CreateTemplate(string outputPath, CemeteryLotAccount account)
     {
         if (account == null) throw new ArgumentNullException(nameof(account));
@@ -203,27 +213,19 @@ public static class WordTemplateService
         var map = ToPlaceholders(account);
 
         // Body
-        foreach (var para in body.Descendants<Paragraph>())
+        foreach (var para in body.Descendants<WParagraph>())
         {
-            var paraText = string.Concat(para.Descendants<WText>().Select(t => t.Text));
-            if (paraText.Contains("{{"))
-            {
-                FlattenRuns(para);
-                ReplaceTokens(para, map);
-            }
+            FlattenRuns(para);
+            ReplaceTokens(para, map);
         }
 
         // Headers
         foreach (var hp in main.HeaderParts)
         {
-            foreach (var para in hp.Header.Descendants<Paragraph>())
+            foreach (var para in hp.Header.Descendants<WParagraph>())
             {
-                var t = string.Concat(para.Descendants<WText>().Select(x => x.Text));
-                if (t.Contains("{{"))
-                {
-                    FlattenRuns(para);
-                    ReplaceTokens(para, map);
-                }
+                FlattenRuns(para);
+                ReplaceTokens(para, map);
             }
             hp.Header.Save();
         }
@@ -231,14 +233,10 @@ public static class WordTemplateService
         // Footers
         foreach (var fp in main.FooterParts)
         {
-            foreach (var para in fp.Footer.Descendants<Paragraph>())
+            foreach (var para in fp.Footer.Descendants<WParagraph>())
             {
-                var t = string.Concat(para.Descendants<WText>().Select(x => x.Text));
-                if (t.Contains("{{"))
-                {
-                    FlattenRuns(para);
-                    ReplaceTokens(para, map);
-                }
+                FlattenRuns(para);
+                ReplaceTokens(para, map);
             }
             fp.Footer.Save();
         }
@@ -246,9 +244,6 @@ public static class WordTemplateService
         main.Document.Save();
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // PLACEHOLDER MAPPING
-    // ═════════════════════════════════════════════════════════════
     public static Dictionary<string, string> ToPlaceholders(CemeteryLotAccount a)
     {
         return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -265,16 +260,12 @@ public static class WordTemplateService
             ["TOTAL DELIQUENCY"] = a.TotalAmountDue ?? "0.00",
         };
     }
-
-    // ═════════════════════════════════════════════════════════════
-    // FLATTEN RUNS
-    // ═════════════════════════════════════════════════════════════
-    private static void FlattenRuns(Paragraph para)
+    private static void FlattenRuns(WParagraph para)
     {
         if (para == null) return;
 
-        var runs = para.Elements<Run>().ToList();
-        if (runs.Count <= 1) return;
+        var runs = para.Elements<WRun>().ToList();
+        if (runs.Count == 0) return;
 
         var combined = string.Concat(
             runs.SelectMany(r => r.Elements<WText>()).Select(t => t.Text ?? string.Empty));
@@ -292,10 +283,6 @@ public static class WordTemplateService
         foreach (var r in runs.Skip(1))
             r.Remove();
     }
-
-    // ═════════════════════════════════════════════════════════════
-    // REPLACE TOKENS (+ underline value only)
-    // ═════════════════════════════════════════════════════════════
     private static readonly HashSet<string> UnderlineKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "DateGenerated",
@@ -306,52 +293,96 @@ public static class WordTemplateService
         "NAME OF DECEASED",
     };
 
-    private static void ReplaceTokens(Paragraph para, Dictionary<string, string> map)
+    private static void ReplaceTokens(WParagraph para, Dictionary<string, string> map)
     {
         if (para == null || map == null) return;
 
-        foreach (var text in para.Descendants<WText>().ToList())
+        // 1) Full paragraph text
+        var fullText = string.Concat(para.Descendants<WText>().Select(t => t.Text));
+        if (string.IsNullOrEmpty(fullText) || !fullText.Contains("{{"))
+            return;
+
+        // 2) Replace every token in the full string
+        var replaced = fullText;
+        string? underlineKey = null;
+
+        foreach (var kvp in map)
         {
-            var original = text.Text ?? "";
-            var replaced = original;
-            string? underlineKey = null;
-
-            foreach (var kvp in map)
+            var token = "{{" + kvp.Key + "}}";
+            if (replaced.IndexOf(token, StringComparison.Ordinal) >= 0)
             {
-                var token = "{{" + kvp.Key + "}}";
-                if (replaced.IndexOf(token, StringComparison.Ordinal) >= 0)
-                {
-                    replaced = replaced.Replace(token, kvp.Value ?? "");
-                    if (UnderlineKeys.Contains(kvp.Key))
-                        underlineKey = kvp.Key;
-                }
+                replaced = replaced.Replace(token, kvp.Value ?? "");
+                if (UnderlineKeys.Contains(kvp.Key))
+                    underlineKey = kvp.Key;
             }
+        }
 
-            if (string.Equals(original, replaced, StringComparison.Ordinal))
-                continue;
+        if (string.Equals(fullText, replaced, StringComparison.Ordinal))
+            return;
 
-            // Handle any embedded newlines in the replacement
-            if (replaced.Contains('\n'))
-                InsertLineBreaks(text, replaced);
-            else
-                text.Text = replaced;
+        // 3) Snapshot the first run's properties so new runs inherit them
+        var firstRun = para.Elements<WRun>().FirstOrDefault();
+        var baseProps = firstRun?.RunProperties?.CloneNode(true) as WRunProperties;
 
-            text.Space = SpaceProcessingModeValues.Preserve;
+        // 4) Clear all existing runs
+        foreach (var r in para.Elements<WRun>().ToList())
+            r.Remove();
 
-            // Split the run so only the substituted value is underlined
-            if (underlineKey != null)
-                UnderlineValueOnly(text, map[underlineKey]);
+        // 5) Rebuild
+        if (underlineKey == null
+            || !map.TryGetValue(underlineKey, out var value)
+            || string.IsNullOrEmpty(value))
+        {
+            var run = new WRun();
+            if (baseProps != null) run.AppendChild(baseProps.CloneNode(true));
+            run.AppendChild(new WText(replaced) { Space = SpaceProcessingModeValues.Preserve });
+            para.AppendChild(run);
+            return;
+        }
+
+        int idx = replaced.IndexOf(value, StringComparison.Ordinal);
+        if (idx < 0)
+        {
+            var run = new WRun();
+            if (baseProps != null) run.AppendChild(baseProps.CloneNode(true));
+            run.AppendChild(new WText(replaced) { Space = SpaceProcessingModeValues.Preserve });
+            para.AppendChild(run);
+            return;
+        }
+
+        var before = replaced.Substring(0, idx);
+        var after = replaced.Substring(idx + value.Length);
+
+        if (before.Length > 0)
+        {
+            var r = new WRun();
+            if (baseProps != null) r.AppendChild(baseProps.CloneNode(true));
+            r.AppendChild(new WText(before) { Space = SpaceProcessingModeValues.Preserve });
+            para.AppendChild(r);
+        }
+
+        var valueRun = new WRun();
+        var valueProps = baseProps?.CloneNode(true) as WRunProperties ?? new WRunProperties();
+        foreach (var u in valueProps.Elements<WUnderline>().ToList()) u.Remove();
+        valueProps.Append(new WUnderline { Val = WUnderlineValues.Single });
+
+        valueRun.AppendChild(valueProps);
+        valueRun.AppendChild(new WText(value) { Space = SpaceProcessingModeValues.Preserve });
+        para.AppendChild(valueRun);
+
+        if (after.Length > 0)
+        {
+            var r = new WRun();
+            if (baseProps != null) r.AppendChild(baseProps.CloneNode(true));
+            r.AppendChild(new WText(after) { Space = SpaceProcessingModeValues.Preserve });
+            para.AppendChild(r);
         }
     }
-
-    // ═════════════════════════════════════════════════════════════
-    // UNDERLINE VALUE ONLY (label stays plain)
-    // ═════════════════════════════════════════════════════════════
     private static void UnderlineValueOnly(WText text, string value)
     {
         if (text == null || string.IsNullOrEmpty(value)) return;
 
-        var run = text.Parent as Run;
+        var run = text.Parent as WRun;
         if (run == null) return;
 
         var full = text.Text ?? "";
@@ -361,12 +392,12 @@ public static class WordTemplateService
         var before = full.Substring(0, idx);
         var after = full.Substring(idx + value.Length);
 
-        RunProperties? originalProps = run.RunProperties;
+        WRunProperties? originalProps = run.RunProperties;
 
         // before
         if (before.Length > 0)
         {
-            var beforeRun = new Run();
+            var beforeRun = new WRun();
             if (originalProps != null)
                 beforeRun.AppendChild(originalProps.CloneNode(true));
             beforeRun.AppendChild(new WText(before) { Space = SpaceProcessingModeValues.Preserve });
@@ -374,14 +405,14 @@ public static class WordTemplateService
         }
 
         // value (underlined)
-        var valueRun = new Run();
-        RunProperties valueProps = originalProps != null
-            ? (RunProperties)originalProps.CloneNode(true)
-            : new RunProperties();
+        var valueRun = new WRun();
+        var valueProps = originalProps != null
+            ? (WRunProperties)originalProps.CloneNode(true)
+            : new WRunProperties();
 
-        foreach (var u in valueProps.Elements<Underline>().ToList())
+        foreach (var u in valueProps.Elements<WUnderline>().ToList())
             u.Remove();
-        valueProps.Append(new Underline { Val = UnderlineValues.Single });
+        valueProps.Append(new WUnderline { Val = WUnderlineValues.Single });
 
         valueRun.AppendChild(valueProps);
         valueRun.AppendChild(new WText(value) { Space = SpaceProcessingModeValues.Preserve });
@@ -390,7 +421,7 @@ public static class WordTemplateService
         // after
         if (after.Length > 0)
         {
-            var afterRun = new Run();
+            var afterRun = new WRun();
             if (originalProps != null)
                 afterRun.AppendChild(originalProps.CloneNode(true));
             afterRun.AppendChild(new WText(after) { Space = SpaceProcessingModeValues.Preserve });
@@ -399,79 +430,13 @@ public static class WordTemplateService
 
         // remove original
         text.Remove();
-        if (!run.Elements<WText>().Any() &&
-            !run.Elements<Break>().Any() &&
-            !run.Elements<Drawing>().Any())
+        if (!run.Elements<WText>().Any()
+            && !run.Elements<WBreak>().Any()
+            && !run.Elements<Drawing>().Any())
         {
             run.Remove();
         }
     }
-    /// <summary>
-    /// Generates ONE Word document containing all accounts, one page per account,
-    /// using the bundled template as a base. Each account gets a copy of the
-    /// template body with placeholders replaced, separated by a page break.
-    /// </summary>
-    public static void GenerateCombinedWord(string outputPath, List<CemeteryLotAccount> accounts)
-    {
-        if (accounts == null || accounts.Count == 0)
-            throw new ArgumentException("No accounts to generate.", nameof(accounts));
-
-        var templatePath = ResolveTemplatePath();
-
-        if (File.Exists(outputPath)) File.Delete(outputPath);
-        File.Copy(templatePath, outputPath, overwrite: true);
-
-        using var doc = WordprocessingDocument.Open(outputPath, isEditable: true);
-        var main = doc.MainDocumentPart!;
-        var body = main.Document.Body!;
-
-        // 1) Capture the original body content (the blank template body)
-        var originalChildren = body.ChildElements
-            .Select(e => e.CloneNode(true))
-            .ToList();
-
-        // 2) Clear the body — we'll re-add filled copies per account
-        body.RemoveAllChildren();
-
-        // 3) For each account, append a filled clone of the template body
-        for (int i = 0; i < accounts.Count; i++)
-        {
-            var account = accounts[i];
-            var map = ToPlaceholders(account);
-
-            foreach (var node in originalChildren)
-            {
-                var clone = node.CloneNode(true);
-
-                // Replace tokens inside every cloned paragraph
-                foreach (var para in clone.Descendants<Paragraph>())
-                {
-                    var paraText = string.Concat(
-                        para.Descendants<WText>().Select(t => t.Text));
-                    if (paraText.Contains("{{"))
-                    {
-                        FlattenRuns(para);
-                        ReplaceTokens(para, map);
-                    }
-                }
-
-                body.AppendChild(clone);
-            }
-
-            // 4) Insert a page break between accounts (but not after the last one)
-            if (i < accounts.Count - 1)
-            {
-                body.AppendChild(new Paragraph(
-                    new Run(new Break { Type = BreakValues.Page })));
-            }
-        }
-
-        main.Document.Save();
-    }
-
-    // ═════════════════════════════════════════════════════════════
-    // INSERT LINE BREAKS
-    // ═════════════════════════════════════════════════════════════
     private static void InsertLineBreaks(WText text, string value)
     {
         if (text == null || value == null) return;
@@ -482,13 +447,13 @@ public static class WordTemplateService
 
         if (parts.Length <= 1) return;
 
-        var parentRun = text.Parent as Run;
+        var parentRun = text.Parent as WRun;
         if (parentRun == null) return;
 
         OpenXmlElement anchor = text;
         for (int i = 1; i < parts.Length; i++)
         {
-            var br = new Break();
+            var br = new WBreak();
             parentRun.InsertAfter(br, anchor);
             anchor = br;
 

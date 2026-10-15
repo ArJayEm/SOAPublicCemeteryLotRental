@@ -1,13 +1,9 @@
 using ClosedXML.Excel;
-using DocumentFormat.OpenXml.Bibliography;
-using DocumentFormat.OpenXml.Office2010.ExcelAc;
 using QuestPDF.Drawing;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 using System.ComponentModel;
-using System.Drawing.Printing;
-using System.Text.RegularExpressions;
 
 namespace StatementOfAccountPrinting;
 
@@ -20,12 +16,24 @@ public partial class MainForm : Form
     private readonly List<Stream> _fontStreams = new();
     private BlockFilterPopup? _blockPopup;
     private readonly HashSet<string> _selectedBlocks = new(StringComparer.OrdinalIgnoreCase);
+    private bool _blockFilterInitialized;   // set true once the user has made a selection
 
     public MainForm()
     {
         InitializeComponent();
 
         FormClosing += MainForm_FormClosing;
+        btnPrintSelected.Click += btnPrintSelected_Click;
+
+        var wa = Screen.FromControl(this).WorkingArea;
+
+        int newWidth = Math.Min(Width, wa.Width);
+        int newHeight = Math.Min(Height, wa.Height);
+
+        int newLeft = Math.Max(wa.Left, Math.Min(Left, wa.Right - newWidth));
+        int newTop = Math.Max(wa.Top, Math.Min(Top, wa.Bottom - newHeight));
+
+        Bounds = new Rectangle(newLeft, newTop, newWidth, newHeight);
 
         Text = AppTitle;
         //dgvData.DataSource = _accounts;
@@ -36,6 +44,12 @@ public partial class MainForm : Form
         ToolTip toolTip = new ToolTip();
         toolTip.SetToolTip(btnBlockFilter, "Select Blocks to Print");
         toolTip.SetToolTip(btnPrintPdf, "Export as PDF");
+        toolTip.SetToolTip(btnPrintSelected, "Print selected row(s) from the active tab");
+
+        var savedFormat = Properties.Settings.Default.ExportFormat;
+        btnPrintPdf.Text = $"Export as {savedFormat}";
+        bool isPdf = savedFormat == "PDF";
+        fileToolStripMenuItem.Visible = !isPdf;
     }
 
     private async void MainForm_Shown(object sender, EventArgs e)
@@ -78,13 +92,35 @@ public partial class MainForm : Form
 
         if (_accounts.Count == 0) return;
 
-        // Group by block
+        // ── Determine which blocks should be visible ──
+        var allBlockNames = _accounts
+            .Select(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
+                            ? "(No Block)"
+                            : a.LotBlockNumber.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // If nothing is selected, or everything is selected → show all
+        bool showAll = _selectedBlocks.Count == 0
+               || _selectedBlocks.Count >= allBlockNames.Count;
+
+        var visibleBlocks = showAll
+            ? allBlockNames
+            : allBlockNames.Where(b => _selectedBlocks.Contains(b)).ToList();
+
+        // ── Group only the visible blocks ──
         var groups = _accounts
+            .Where(a =>
+            {
+                var key = string.IsNullOrWhiteSpace(a.LotBlockNumber)
+                            ? "(No Block)"
+                            : a.LotBlockNumber.Trim();
+                return visibleBlocks.Contains(key, StringComparer.OrdinalIgnoreCase);
+            })
             .GroupBy(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
                             ? "(No Block)"
                             : a.LotBlockNumber.Trim())
-            //.OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
-            .OrderBy(g => ExtractBlockNumber(g.Key))         // 1, 2, 10, 100, …
+            .OrderBy(g => ExtractBlockNumber(g.Key))          // 1, 2, 10, 100, …
             .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -109,12 +145,28 @@ public partial class MainForm : Form
                 AllowUserToDeleteRows = false,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = true,           // ← multi-select support
                 DataSource = blockList
             };
+
+            grid.SelectionChanged += (s, e) =>
+            {
+                btnPrintSelected.Enabled = grid.SelectedRows.Count > 0;
+            };
+
+            // Wire the context menu
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("Print Selected Record(s)", null,
+                (s, e) => btnPrintSelected_Click(s, e));
+            grid.ContextMenuStrip = menu;
 
             page.Controls.Add(grid);
             tabBlocks.TabPages.Add(page);
         }
+
+        // ── Subscribe ONCE for the tab-change event (not inside the loop) ──
+        tabBlocks.SelectedIndexChanged -= TabBlocks_SelectedIndexChanged;
+        tabBlocks.SelectedIndexChanged += TabBlocks_SelectedIndexChanged;
 
         // Restore previous selection if still present
         if (current != null)
@@ -129,8 +181,151 @@ public partial class MainForm : Form
             }
         }
 
-        // If the "All" tab was requested, keep it as the first tab (see below)
-        //PrependAllTab();
+        // Fallback: if the previous tab is gone, select the first available tab
+        if (tabBlocks.TabPages.Count > 0 && tabBlocks.SelectedTab == null)
+            tabBlocks.SelectedTab = tabBlocks.TabPages[0];
+
+        // If there are no tabs at all (e.g., a filter matched nothing), disable print
+        if (tabBlocks.TabPages.Count == 0)
+            btnPrintSelected.Enabled = false;
+    }
+
+    private void TabBlocks_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        var g = GetActiveGrid();
+        btnPrintSelected.Enabled = g?.SelectedRows.Count > 0;
+    }
+    private DataGridView? GetActiveGrid()
+    {
+        if (tabBlocks.SelectedTab == null) return null;
+        return tabBlocks.SelectedTab.Controls.OfType<DataGridView>().FirstOrDefault();
+    }
+    private List<CemeteryLotAccount> GetSelectedAccountsFromActiveGrid()
+    {
+        var grid = GetActiveGrid();
+        if (grid == null) return new List<CemeteryLotAccount>();
+
+        // If nothing is selected, return an empty list (caller can decide to fall back to all)
+        if (grid.SelectedRows.Count == 0) return new List<CemeteryLotAccount>();
+
+        return grid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(r => r.DataBoundItem as CemeteryLotAccount)
+            .Where(a => a != null)
+            .Cast<CemeteryLotAccount>()
+            .ToList();
+    }
+    private async void btnPrintSelected_Click(object sender, EventArgs e)
+    {
+        btnImportExcel.Enabled = false;
+        btnGenerateWord.Enabled = false;
+        btnPrintPdf.Enabled = false;
+        btnPrintSelected.Enabled = false;
+
+        try
+        {
+            // ── Collect selected rows (or all rows from the active tab) ──
+            var selected = GetSelectedAccountsFromActiveGrid();
+
+            if (selected.Count == 0)
+            {
+                var grid = GetActiveGrid();
+                if (grid?.DataSource is IEnumerable<CemeteryLotAccount> all)
+                    selected = all.ToList();
+            }
+
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("No records to print.",
+                    "Print", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            // ── Read settings once ──
+            string paperSize = Properties.Settings.Default.PaperSize ?? "A4";
+            bool skipZero = Properties.Settings.Default.SkipZeroTotal;
+            string exportFormat = Properties.Settings.Default.ExportFormat ?? "PDF";
+
+            // Apply skip-zero filter if enabled
+            if (skipZero)
+                selected = selected.Where(a => !IsZeroTotal(a.TotalAmountDue)).ToList();
+
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("All selected records have ₱0.00 total.",
+                    "Print", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            // ── Ask for an output folder ──
+            using var fbd = new FolderBrowserDialog
+            {
+                Description = "Choose output folder for selected record(s)"
+            };
+            if (fbd.ShowDialog() != DialogResult.OK) return;
+
+            var outputFolder = fbd.SelectedPath;
+
+            // ── File name base ──
+            string fileBase = selected
+                .Select(a => a.LotBlockNumber?.Trim() ?? "(No Block)")
+                .Distinct()
+                .Count() == 1
+                    ? selected[0].LotBlockNumber!.Trim()
+                    : "Selected";
+
+            string safeBase = MakeSafeFileName(fileBase);
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+            bool isWord = string.Equals(exportFormat, "DOCX", StringComparison.OrdinalIgnoreCase);
+            string extension = isWord ? "docx" : "pdf";
+            string fileName = $"Statements_{safeBase}_{paperSize}_{timestamp}.{extension}";
+            string filePath = Path.Combine(outputFolder, fileName);
+
+            // ── Run the export with progress ──
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            await ProgressDialog.RunAsync(this,
+                isWord ? "Generating DOCX…" : "Generating PDF…",
+                async progress =>
+                {
+                    await Task.Run(() =>
+                    {
+                        progress.Report((10, $"Preparing {selected.Count} record(s)…"));
+
+                        if (isWord)
+                        {
+                            // Word: one combined .docx for the selected rows
+                            WordTemplateService.GenerateCombinedWord(filePath, selected.ToList(), paperSize);
+                        }
+                        else
+                        {
+                            // PDF: reuse the per-block renderer
+                            CreatePdfPerBlock(filePath, paperSize, skipZero, selected);
+                        }
+
+                        progress.Report((100, $"Done. Saved {selected.Count} record(s)."));
+                    });
+                }, keepOpenWhenDone: false);
+
+            sw.Stop();
+            lblStatus.Text =
+                $"Saved {selected.Count} record(s) as {exportFormat} in {FormatElapsed(sw.Elapsed)} → {filePath}";
+
+            if (AskYesNo($"{exportFormat} created. Open it now?"))
+                OpenFile(filePath);
+        }
+        catch (Exception ex)
+        {
+            ShowError("Print failed", ex);
+        }
+        finally
+        {
+            btnImportExcel.Enabled = true;
+            btnGenerateWord.Enabled = _accounts.Count > 0;
+            btnPrintPdf.Enabled = _accounts.Count > 0;
+            btnPrintSelected.Enabled = _accounts.Count > 0;
+        }
     }
     private static int ExtractBlockNumber(string name)
     {
@@ -161,7 +356,8 @@ public partial class MainForm : Form
             AllowUserToAddRows = false,
             AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            DataSource = _accounts   // the master BindingList
+            MultiSelect = true,
+            DataSource = _accounts
         };
 
         allPage.Controls.Add(grid);
@@ -171,6 +367,12 @@ public partial class MainForm : Form
     #region IMPORT...
     private async void btnImportExcel_Click(object sender, EventArgs e)
     {
+        btnImportExcel.Enabled = false;
+        btnGenerateWord.Enabled = false;
+        btnPrintPdf.Enabled = false;
+        btnPrintSelected.Enabled = false;   // ← add this
+        btnBlockFilter.Enabled = false;
+
         using var ofd = new OpenFileDialog
         {
             Title = "Select Excel file",
@@ -254,6 +456,7 @@ public partial class MainForm : Form
             SaveAccountsToDisk();
 
             btnGenerateWord.Enabled = btnPrintPdf.Enabled = _accounts.Count > 0;
+            btnPrintSelected.Enabled = _accounts.Count > 0;   // ← add this
             lblStatus.Text = $"Imported {_accounts.Count} row(s) from " +
                              $"{Path.GetFileName(filePath)}.";
 
@@ -271,27 +474,12 @@ public partial class MainForm : Form
         finally
         {
             btnImportExcel.Enabled = true;
+            btnGenerateWord.Enabled = _accounts.Count > 0;
+            btnPrintPdf.Enabled = _accounts.Count > 0;
+            btnPrintSelected.Enabled = _accounts.Count > 0;
+            btnBlockFilter.Enabled = _accounts.Count > 0;
         }
     }
-    //private void PopulateBlockFilter()
-    //{
-    //    clbBlockFilter.Items.Clear();
-
-    //    var blocks = _accounts
-    //        .Select(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
-    //                        ? "(No Block)"
-    //                        : a.LotBlockNumber.Trim())
-    //        .Distinct()
-    //        .OrderBy(b => ExtractBlockNumber(b))
-    //        .ThenBy(b => b, StringComparer.OrdinalIgnoreCase)
-    //        .ToList();
-
-    //    foreach (var block in blocks)
-    //    {
-    //        // Checked by default = export all
-    //        clbBlockFilter.Items.Add(block, true);
-    //    }
-    //}
     #endregion
     private static decimal ParseNum(IXLRow row, string columnLetter)
     {
@@ -366,11 +554,6 @@ public partial class MainForm : Form
             return string.Empty;
         }
     }
-
-    // ─────────────────────────────────────────────────────────────
-    // Fetch cell text safely by column number.
-    // Handles missing cells, dates, numbers, and trims whitespace.
-    // ─────────────────────────────────────────────────────────────
     private static string GetCell(IXLRangeRow row, int col)
     {
         try
@@ -496,6 +679,10 @@ public partial class MainForm : Form
     // ───── 3. Fill template → one .docx statement per row ─────
     private void btnGenerateWord_Click(object sender, EventArgs e)
     {
+        ExportAsWord();
+    }
+    private async Task ExportAsWord()
+    {
         using var sfd = new SaveFileDialog
         {
             Title = "Save statements as",
@@ -516,7 +703,8 @@ public partial class MainForm : Form
 
         try
         {
-            WordTemplateService.GenerateCombinedWord(sfd.FileName, _accounts.ToList());
+            string paperSize = Properties.Settings.Default.PaperSize ?? "A4";
+            WordTemplateService.GenerateCombinedWord(sfd.FileName, _accounts.ToList(), paperSize);
 
             lblStatus.Text = $"Generated {_accounts.Count} statement(s) in {Path.GetFileName(sfd.FileName)}";
 
@@ -532,10 +720,28 @@ public partial class MainForm : Form
             ShowError("Word generation failed", ex);
         }
     }
-
-    // ────────────── 4. Print all rows to one PDF ──────────────
     private async void btnPrintPdf_Click(object sender, EventArgs e)
     {
+        string format = Properties.Settings.Default.ExportFormat ?? "PDF";
+
+        if (string.Equals(format, "DOCX", StringComparison.OrdinalIgnoreCase))
+        {
+            ExportAsWord();
+        }
+        else
+        {
+            await ExportAsPdfAsync();
+        }
+    }
+
+    private async Task ExportAsPdfAsync()
+    {
+        btnImportExcel.Enabled = false;
+        btnGenerateWord.Enabled = false;
+        btnPrintPdf.Enabled = false;
+        btnPrintSelected.Enabled = false;   // ← add this
+        btnBlockFilter.Enabled = false;
+
         if (_accounts.Count == 0)
         {
             MessageBox.Show("No accounts to export.", "PDF",
@@ -692,6 +898,7 @@ public partial class MainForm : Form
 
             // Reset block filter after export
             _selectedBlocks.Clear();
+            _blockFilterInitialized = false;
             UpdateBlockFilterCaption();
         }
         catch (Exception ex)
@@ -701,7 +908,11 @@ public partial class MainForm : Form
         }
         finally
         {
-            btnImportExcel.Enabled = btnGenerateWord.Enabled = btnPrintPdf.Enabled = true;
+            btnImportExcel.Enabled = true;
+            btnGenerateWord.Enabled = _accounts.Count > 0;
+            btnPrintPdf.Enabled = _accounts.Count > 0;
+            btnPrintSelected.Enabled = _accounts.Count > 0;
+            btnBlockFilter.Enabled = _accounts.Count > 0;
         }
     }
 
@@ -950,10 +1161,6 @@ public partial class MainForm : Form
             }
         }).GeneratePdf(path);
     }
-    /// <summary>
-    /// True if the string represents a zero, empty, or unparseable amount.
-    /// Handles "0", "0.00", "₱ 0.00", "-", "", null.
-    /// </summary>
     private static bool IsZeroTotal(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return true;
@@ -970,536 +1177,7 @@ public partial class MainForm : Form
             System.Globalization.CultureInfo.InvariantCulture,
             out var n) && n == 0m;
     }
-    private void CreatePdfByBlock(string path, string paperSize)
-    {
-        if (_accounts.Count == 0)
-        {
-            MessageBox.Show("No accounts to export.", "PDF",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
 
-        // Group accounts by block / lot number
-        var groups = _accounts
-            .GroupBy(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
-                            ? "(No Block)"
-                            : a.LotBlockNumber.Trim())
-            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        // Logos
-        var baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        var logoLeft = Path.Combine(baseDir, "Templates", "Images", "navotas-logo-left.jpg");
-        var logoRight = Path.Combine(baseDir, "Templates", "Images", "blgf-logo-right.png");
-
-        byte[]? logoLeftBytes = File.Exists(logoLeft) ? File.ReadAllBytes(logoLeft) : null;
-        byte[]? logoRightBytes = File.Exists(logoRight) ? File.ReadAllBytes(logoRight) : null;
-
-        Document.Create(doc =>
-        {
-            foreach (var group in groups)
-            {
-                // ── One page per block ──
-                doc.Page(page =>
-                {
-                    ApplyPageSetup(page, paperSize);
-                    DrawHeader(page, logoLeftBytes, logoRightBytes);
-                    DrawBlockContent(page, group.Key, group.ToList());
-                    DrawFooter(page);
-                });
-            }
-        }).GeneratePdf(path);
-
-        MessageBox.Show(
-            $"PDF generated for {groups.Count} block(s), {_accounts.Count} record(s) ({paperSize}).",
-            "PDF", MessageBoxButtons.OK, MessageBoxIcon.Information);
-    }
-
-    private static void ApplyPageSetup(PageDescriptor page, string paperSize)
-    {
-        switch (paperSize)
-        {
-            case "Legal": page.Size(PageSizes.Legal); break;
-            default: page.Size(PageSizes.A4); break;
-        }
-
-        page.MarginTop(1, Unit.Centimetre);
-        page.MarginLeft(2.54f, Unit.Centimetre);
-        page.MarginRight(2.54f, Unit.Centimetre);
-        page.MarginBottom(0.5f, Unit.Centimetre);
-
-        page.DefaultTextStyle(t => t
-            .FontFamily("Lato")
-            .FontSize(9)
-            .FontColor(Colors.Black));
-    }
-
-    private static void DrawHeader(PageDescriptor page, byte[]? logoLeft, byte[]? logoRight)
-    {
-        page.Header().PaddingTop(0).Column(h =>
-        {
-            h.Item().Row(row =>
-            {
-                row.ConstantItem(65).Height(65).AlignLeft().AlignMiddle().Element(e =>
-                {
-                    if (logoLeft != null) e.Image(logoLeft).FitArea();
-                });
-
-                row.RelativeItem().AlignCenter().AlignMiddle().Column(center =>
-                {
-                    center.Item().AlignCenter()
-                        .Text("Republic of the Philippines")
-                        .FontSize(11).FontFamily("Times New Roman");
-
-                    center.Item().AlignCenter()
-                        .Text("CITY OF NAVOTAS")
-                        .FontSize(16).Bold().FontFamily("Times New Roman")
-                        .FontColor(Colors.Grey.Darken3);
-
-                    center.Item().AlignCenter()
-                        .Text("OFFICE OF THE CITY TREASURER")
-                        .FontSize(12).FontFamily("Times New Roman");
-                });
-
-                row.ConstantItem(65).Height(65).AlignRight().AlignMiddle().Element(e =>
-                {
-                    if (logoRight != null) e.Image(logoRight).FitArea();
-                });
-            });
-
-            h.Item().PaddingTop(20).AlignCenter()
-                .Text("STATEMENT OF ACCOUNT – PUBLIC CEMETERY LOT RENTAL")
-                .FontSize(9).Bold();
-
-            h.Item().PaddingTop(2).AlignCenter()
-                .Text("(Pahayag ng Bayarin sa Renta ng Lupa sa Navotas City Public Cemetery)")
-                .FontSize(9).Bold();
-
-            h.Item().PaddingTop(14);
-        });
-    }
-
-    private static void DrawFooter(PageDescriptor page)
-    {
-        page.Footer().PaddingBottom(0.5f, Unit.Centimetre).Column(f =>
-        {
-            f.Item().LineHorizontal(1).LineColor(Colors.Red.Medium);
-
-            f.Item().PaddingTop(6).AlignCenter()
-                .Text("The Navotas City Hall M. Naval St., Sipac Almacen, Navotas City Zip: 1485")
-                .FontSize(9).Bold();
-
-            f.Item().AlignCenter().Text(txt =>
-            {
-                txt.Span("Tel. Nos. ").FontSize(9).Bold();
-                txt.Span("283-4210 Local 201, 202 & 813").FontSize(9).Bold();
-            });
-        });
-    }
-
-    private static void DrawBlockContent(PageDescriptor page, string blockName, List<CemeteryLotAccount> rows)
-    {
-        page.Content().Column(col =>
-        {
-            col.Spacing(0);
-
-            // ── Block Title ──
-            col.Item().PaddingTop(4).AlignCenter()
-                .Text($"BLOCK / LOT: {blockName}")
-                .FontSize(11).Bold();
-
-            col.Item().PaddingTop(10);
-
-            // ── Per-row table ──
-            col.Item().Table(table =>
-            {
-                table.ColumnsDefinition(c =>
-                {
-                    c.RelativeColumn(3);   // name / address / deceased
-                    c.RelativeColumn(1);   // area
-                    c.RelativeColumn(1);   // rental
-                    c.RelativeColumn(1);   // surcharge
-                    c.RelativeColumn(1);   // interest
-                    c.RelativeColumn(1);   // total
-                });
-
-                // Header row
-                HeaderCell(table, "NAME / ADDRESS");
-                HeaderCell(table, "AREA");
-                HeaderCell(table, "RENTAL");
-                HeaderCell(table, "SURCHARGE");
-                HeaderCell(table, "INTEREST");
-                HeaderCell(table, "TOTAL");
-
-                // Data rows
-                decimal sumRental = 0m;
-                decimal sumSurcharge = 0m;
-                decimal sumInterest = 0m;
-                decimal sumTotal = 0m;
-
-                foreach (var r in rows)
-                {
-                    decimal.TryParse(r.RentalOrRenewalFee, out var rental);
-                    decimal.TryParse(r.Surcharge, out var surcharge);
-                    decimal.TryParse(r.Interest, out var interest);
-                    decimal.TryParse(r.TotalAmountDue, out var total);
-
-                    sumRental += rental;
-                    sumSurcharge += surcharge;
-                    sumInterest += interest;
-                    sumTotal += total;
-
-                    DataCell(table,
-                        $"{r.LesseeName}\n{r.Address}\nDeceased: {r.NameOfDeceased}",
-                        left: true);
-
-                    DataCell(table, r.AreaSqm + " sq.m.");
-                    DataCell(table, "₱ " + rental.ToString("N2"));
-                    DataCell(table, "₱ " + surcharge.ToString("N2"));
-                    DataCell(table, "₱ " + interest.ToString("N2"));
-                    DataCell(table, "₱ " + total.ToString("N2"));
-                }
-
-                // Footer totals row
-                TotalsCell(table, $"TOTAL — {rows.Count} record(s)");
-                TotalsCell(table, "");
-                TotalsCell(table, "₱ " + sumRental.ToString("N2"));
-                TotalsCell(table, "₱ " + sumSurcharge.ToString("N2"));
-                TotalsCell(table, "₱ " + sumInterest.ToString("N2"));
-                TotalsCell(table, "₱ " + sumTotal.ToString("N2"));
-            });
-
-            // Signature block
-            col.Item().PaddingTop(24).Text("Very truly yours,").FontSize(9);
-            col.Item().PaddingTop(30).Text("ALMA D. BUCALEN, CPA, MPA").FontSize(9).Bold();
-            col.Item().Text("Acting City Treasurer").FontSize(9);
-        });
-    }
-
-    private static void HeaderCell(TableDescriptor table, string text)
-    {
-        table.Cell()
-            .Border(0.5f).Padding(3)
-            .AlignCenter().AlignMiddle()
-            .Text(text).FontSize(9).Bold();
-    }
-
-    private static void DataCell(TableDescriptor table, string text, bool left = false)
-    {
-        var cell = table.Cell().Border(0.5f).Padding(3);
-        var aligned = left ? cell.AlignLeft() : cell.AlignRight();
-        aligned.AlignMiddle().Text(text).FontSize(9);
-    }
-
-    private static void TotalsCell(TableDescriptor table, string text)
-    {
-        table.Cell()
-            .Border(0.5f).Padding(3)
-            .Background(Colors.Grey.Lighten3)
-            .AlignRight().AlignMiddle()
-            .Text(text).FontSize(9).Bold();
-    }
-
-    private void CreatePdf(string path, string paperSize)
-    {
-        if (_accounts.Count == 0)
-        {
-            MessageBox.Show("No accounts to export.", "PDF",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
-        // Resolve logo paths (adjust folder if needed)
-        var baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        var logoLeft = Path.Combine(baseDir, "Templates", "Images", "navotas-logo-left.jpg");
-        var logoRight = Path.Combine(baseDir, "Templates", "Images", "blgf-logo-right.png");
-
-        byte[]? logoLeftBytes = File.Exists(logoLeft) ? File.ReadAllBytes(logoLeft) : null;
-        byte[]? logoRightBytes = File.Exists(logoRight) ? File.ReadAllBytes(logoRight) : null;
-
-        Document.Create(doc =>
-        {
-            foreach (var a in _accounts)
-            {
-                doc.Page(page =>
-                {
-                    // ── A4, standard 1-inch margins ──
-
-                    switch (paperSize)
-                    {
-                        case "Legal":
-                            page.Size(PageSizes.Legal);   // 8.5 × 14 in
-                            break;
-                        case "A4":
-                        default:
-                            page.Size(PageSizes.A4);      // 8.27 × 11.69 in
-                            break;
-                    }
-
-                    page.MarginTop(1, Unit.Centimetre);
-                    page.MarginLeft(2.54f, Unit.Centimetre);
-                    page.MarginRight(2.54f, Unit.Centimetre);
-                    page.MarginBottom(0.5f, Unit.Centimetre);
-                    page.DefaultTextStyle(t => t
-                        .FontFamily("Lato")
-                        .FontSize(9)
-                        .FontColor(Colors.Black));
-
-                    // ═══════════════════════════════════════════════
-                    // HEADER — two logos + office titles + rule
-                    // ═══════════════════════════════════════════════
-                    page.Header().PaddingTop(0).Column(h =>
-                    {
-                        // Logos row
-                        h.Item().Row(row =>
-                        {
-                            h.Item().Row(row =>
-                            {
-                                row.ConstantItem(70)
-                                   .Height(70)
-                                   .AlignLeft().AlignMiddle()
-                                   .Element(e =>
-                                   {
-                                       if (logoLeftBytes != null)
-                                           e.Image(logoLeftBytes).FitArea();
-                                   });
-
-                                row.RelativeItem().AlignCenter().AlignMiddle().Column(center =>
-                                {
-                                    center.Item().AlignCenter()
-                                        .Text("Republic of the Philippines")
-                                        .FontSize(14)
-                                        .FontFamily("Times New Roman");
-
-                                    center.Item().AlignCenter()
-                                        .Text("CITY OF NAVOTAS")
-                                        .FontSize(14).Bold()
-                                        .FontFamily("Times New Roman")
-                                        .FontColor(Colors.Grey.Darken3);
-
-                                    center.Item().AlignCenter()
-                                        .Text("OFFICE OF THE CITY TREASURER")
-                                        .FontSize(14)
-                                        .FontFamily("Times New Roman");
-                                });
-
-                                row.ConstantItem(70)
-                                   .Height(70)
-                                   .AlignRight().AlignMiddle()
-                                   .Element(e =>
-                                   {
-                                       if (logoRightBytes != null)
-                                           e.Image(logoRightBytes).FitArea();
-                                   });
-                            });
-
-                        });
-
-                        // Title
-                        h.Item().PaddingTop(20).AlignCenter()
-                            .Text("STATEMENT OF ACCOUNT – PUBLIC CEMETERY LOT RENTAL")
-                            .FontSize(9).Bold();
-
-                        h.Item().PaddingTop(2).AlignCenter()
-                            .Text("(Pahayag ng Bayarin sa Renta ng Lupa sa Navotas City Public Cemetery)")
-                            .FontSize(9).Bold();
-
-                        h.Item().PaddingTop(14);
-                    });
-
-                    // ═══════════════════════════════════════════════
-                    // CONTENT
-                    // ═══════════════════════════════════════════════
-                    page.Content().Column(col =>
-                    {
-                        col.Spacing(0);
-
-                        // ── Info block (with checkbox to the right) ──
-                        col.Item().Row(row =>
-                        {
-                            row.RelativeItem().Column(inf =>
-                            {
-                                InfoLine(inf, "Date / Petsa: ", a.DateGenerated);
-                                inf.Item().PaddingTop(12);
-                                InfoLine(inf, "Name of Lessee / Pangalan: ", a.LesseeName);
-                                InfoLine(inf, "Address / Tirahan: ", a.Address);
-                                InfoLine(inf, "Block / Lot No.: ", a.LotBlockNumber);
-                                InfoLine(inf, "Area / Sukat: ", a.AreaSqm + " sq. m.");
-                                InfoLine(inf, "Name of Deceased: ", a.NameOfDeceased);
-                            });
-                        });
-
-                        // ── Intro paragraph ──
-                        col.Item().PaddingTop(12).Text(txt =>
-                        {
-                            txt.Span("Batay sa talaan ng ").FontSize(9);
-                            txt.Span("City Treasurer’s Office, ").FontSize(9);
-                            txt.Span("ang sumusunod na bayarin ay ").FontSize(9);
-                            txt.Span("nakatakda ").FontSize(9);
-                            txt.Span("para sa ").FontSize(9);
-                            txt.Span("renta o renewal ").FontSize(9);
-                            txt.Span("ng inyong lote sa ").FontSize(9);
-                            txt.Span("Navotas City Public Cemetery:").FontSize(9).Bold();
-                        });
-
-                        // ── Charges Table
-                        col.Item()
-                           .PaddingTop(12)
-                           .AlignCenter()          // ← centers the table horizontally in the content column
-                           .Width(300)             // ← table width
-                           .Table(table =>
-                           {
-                               table.ColumnsDefinition(c =>
-                               {
-                                   c.RelativeColumn(3);
-                                   c.RelativeColumn(2);
-                               });
-
-                               // Header row
-                               table.Cell()
-                                .Border(0.5f).Padding(4)
-                                .AlignCenter().AlignMiddle()
-                                 .Text("PARTICULARS / DETALYE").FontSize(9).Bold();
-
-                               table.Cell()
-                               .Border(0.5f).Padding(4)
-                                .AlignCenter().AlignMiddle()
-                                .Text("AMOUNT / HALAGA").FontSize(9).Bold();
-
-                               // Data rows
-                               ChargeRow(table, "Rental / Renewal Fee", a.RentalOrRenewalFee);
-                               ChargeRow(table, "Surcharge, if applicable", a.Surcharge);
-                               ChargeRow(table, "Interest, if applicable", a.Interest);
-
-                               // Total row (label has red italic subtitle)
-                               table.Cell()
-               .Border(0.5f)
-                               .AlignLeft().AlignMiddle().Padding(4).Element(cell =>
-                               {
-                                   cell.Text(txt =>
-                                   {
-                                       txt.Span("Total Amount Due / ").FontSize(9);
-                                       txt.Span("Kabuuang Babayaran").FontSize(9).Italic();
-                                   });
-                               });
-                               table.Cell()
-               .Border(0.5f).Padding(4)
-                                    .AlignRight()
-                                    .Text("₱ " + a.TotalAmountDue).FontSize(9);
-                           });
-
-                        // ── Payment and Inquiry Instructions ──
-                        col.Item().PaddingTop(24).AlignCenter()
-                            .Text("PAYMENT AND INQUIRY INSTRUCTIONS")
-                            .FontSize(9).Bold();
-
-                        col.Item().PaddingTop(2).AlignCenter()
-                            .Text("(Paraan ng Pagbabayad at Pagtatanong)")
-                            .FontSize(9).Bold();
-
-                        col.Item().PaddingTop(12).Text(txt =>
-                        {
-                            txt.Span("For Payment: ").FontSize(9).Bold();
-                            txt.Span("Present this Statement of Account and ").FontSize(9);
-                            txt.Span("pay immediately ").FontSize(9).Bold();
-                            txt.Span("the amount due at the ").FontSize(9);
-                            txt.Span("authorized collection counter of the City Treasurer’s Office. ").FontSize(9).Bold();
-                            txt.Span("An Official Receipt shall be issued upon payment.").FontSize(9);
-                        });
-
-                        col.Item().PaddingTop(6).Text(txt =>
-                        {
-                            txt.Span("Para sa Pagbabayad: ").FontSize(9).Bold();
-                            txt.Span("Dalhin ang Statement of Account na ito at agad na bayaran ang kaukulang halaga sa ").FontSize(9);
-                            txt.Span("awtorisadong collection counter ng City Treasurer’s Office. ").FontSize(9).Bold();
-                            txt.Span("Humingi at ingatan ang Official Receipt bilang patunay ng pagbabayad.").FontSize(9);
-                        });
-
-                        col.Item().PaddingTop(6).Text(txt =>
-                        {
-                            txt.Span("For Inquiries / Record Verification: ").FontSize(9).Bold();
-                            txt.Span("Please coordinate with the ").FontSize(9);
-                            txt.Span("City Treasurer’s Office or Navotas City Public Cemetery ").FontSize(9).Bold();
-                            txt.Span("regarding your account, payment history, lease period, or renewal.").FontSize(9);
-                        });
-
-                        col.Item().PaddingTop(4).Text(txt =>
-                        {
-                            txt.Span("Para sa Tanong / Beripikasyon: ").FontSize(9).Bold();
-                            txt.Span("Makipag-ugnayan sa ").FontSize(9);
-                            txt.Span("City Treasurer’s Office or Navotas City Public Cemetery ").FontSize(9).Bold();
-                            txt.Span("tungkol sa inyong account, payment record, lease period, o renewal.").FontSize(9);
-                        });
-
-                        col.Item().PaddingTop(6).Text(txt =>
-                        {
-                            txt.Span("Paalala: ").FontSize(9).Bold();
-                            txt.Span("Kapag hindi nabayaran o na-renew ang renta kahit lumampas na sa ").FontSize(9);
-                            txt.Span("tatlong (3) buwang grace period mula sa expiration ng lease ").FontSize(9).Bold();
-                            txt.Span(", ang cemetery lot ay maaaring ").FontSize(9);
-                            txt.Span("ideklarang bakante ").FontSize(9).Bold();
-                            txt.Span("alinsunod sa umiiral na ordinansa.").FontSize(9);
-                        });
-
-                        col.Item().PaddingTop(2).Text(txt =>
-                        {
-                            txt.Span("Kung nabayaran na ang nasabing account, mangyaring magsumite ng kopya ng " +
-                                     "Official Receipt upang ma-update at ma-reconcile ang aming talaan.")
-                               .FontSize(9);
-                        });
-
-                        // ── Signature Block ──
-                        col.Item().PaddingTop(24).Text("Very truly yours,").FontSize(9);
-                        col.Item().PaddingTop(30).Text("ALMA D. BUCALEN, CPA, MPA").FontSize(9).Bold();
-                        col.Item().Text("Acting City Treasurer").FontSize(9);
-                    });
-
-                    // ═══════════════════════════════════════════════
-                    // FOOTER — red rule + two-line contact info
-                    // ═══════════════════════════════════════════════
-                    page.Footer().PaddingBottom(0, Unit.Centimetre).Column(f =>
-                    {
-                        // Red rule
-                        f.Item().LineHorizontal(1).LineColor(Colors.Red.Medium);
-
-                        // Address
-                        f.Item().PaddingTop(6).AlignCenter()
-                            .Text("The Navotas City Hall M. Naval St., Sipac Almacen, Navotas City Zip: 1485")
-                            .FontSize(9).Bold();
-
-                        // Phone
-                        f.Item().AlignCenter().Text(txt =>
-                        {
-                            txt.Span("Tel. Nos. ").FontSize(9).Bold();
-                            txt.Span("283-4210 Local 201, 202 & 813").FontSize(9).Bold();
-                        });
-                    });
-                });
-            }
-        }).GeneratePdf(path);
-
-        BeginInvoke(new Action(() =>
-        {
-            MessageBox.Show(
-                $"PDF generated for {_accounts.Count} of {_accounts.Count} account(s).",
-                "PDF", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }));
-    }
-
-    // One A4 page per row — page count == row count
-    public static class SoaTemplate
-    {
-        // Match these exactly with your Templates/soa-public_cemetery_lot_rental.docx
-        public const string HeaderTitle = "STATEMENT OF ACCOUNT – PUBLIC CEMETERY LOT RENTAL";
-        public const string HeaderSubtitle = "(Pahayag ng Bayarin sa Renta ng Lupa sa Navotas City Public Cemetery)";
-
-        public const string FooterLeft = "Navotas City Public Cemetery";
-        public const string FooterRight = "City Treasurer’s Office";
-    }
-
-    // ─────────────────────────────────────────────
-    // Info line (label semibold + value regular)
-    // ─────────────────────────────────────────────
     private static void InfoLine(ColumnDescriptor col, string label, string value)
     {
         // Recognize "<number> <unit>" and separate them
@@ -1525,9 +1203,6 @@ public partial class MainForm : Form
         });
     }
 
-    // ─────────────────────────────────────────────
-    // Charges row helper
-    // ─────────────────────────────────────────────
     private static void ChargeRow(TableDescriptor table, string label, string value)
     {
         table.Cell()
@@ -1542,17 +1217,6 @@ public partial class MainForm : Form
              .AlignRight().AlignMiddle()                // ← vertically centered
              .Text("₱ " + (string.IsNullOrWhiteSpace(value) ? "0.00" : value))
              .FontSize(9);
-    }
-
-    private string? PickTemplate()
-    {
-        // Offer the app-folder template first, else browse for one
-        string local = Path.Combine(AppContext.BaseDirectory, TemplateFileName);
-        if (File.Exists(local)) return local;
-
-        using var ofd = new OpenFileDialog
-        { Title = "Select the Word template", Filter = "Word documents (*.docx)|*.docx" };
-        return ofd.ShowDialog() == DialogResult.OK ? ofd.FileName : null;
     }
 
     private static string MakeSafeFileName(string name)
@@ -1580,16 +1244,22 @@ public partial class MainForm : Form
     {
         using var dlg = new SettingsForm(
             Properties.Settings.Default.SkipZeroTotal,
-            Properties.Settings.Default.PaperSize);
+            Properties.Settings.Default.PaperSize,
+            Properties.Settings.Default.ExportFormat);
 
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
         // Save
         Properties.Settings.Default.SkipZeroTotal = dlg.SkipZeroTotal;
         Properties.Settings.Default.PaperSize = dlg.PaperSize;
+        Properties.Settings.Default.ExportFormat = dlg.ExportFormat;
+
         Properties.Settings.Default.Save();
 
         lblStatus.Text = "Settings saved.";
+        btnPrintPdf.Text = $"Export as {dlg.ExportFormat}";
+        bool isPdf = dlg.ExportFormat == "PDF";
+        fileToolStripMenuItem.Visible = !isPdf;
     }
     private static string GetAccountsCachePath()
     {
@@ -1599,12 +1269,10 @@ public partial class MainForm : Form
         Directory.CreateDirectory(dir);
         return Path.Combine(dir, "accounts.json");
     }
-
     private void exportTemplateToolStripMenuItem_Click_1(object sender, EventArgs e)
     {
         ExportTemplate();
     }
-
     private void settingsToolStripMenuItem_Click(object sender, EventArgs e)
     {
         OpenSettings();
@@ -1624,6 +1292,7 @@ public partial class MainForm : Form
         {
             _blockPopup = new BlockFilterPopup();
             _blockPopup.SelectionChanged += OnBlockSelectionChanged;
+            _blockPopup.VisibleChanged += OnBlockFilterVisibilityChanged;
         }
 
         // Distinct block names, sorted naturally
@@ -1636,10 +1305,7 @@ public partial class MainForm : Form
             .ThenBy(b => b, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        // If nothing is stored yet, default to "all checked"
-        IEnumerable<string>? preChecked = _selectedBlocks.Count == 0
-            ? null
-            : _selectedBlocks;
+        IEnumerable<string>? preChecked = _blockFilterInitialized ? _selectedBlocks : null;
 
         _blockPopup.LoadBlocks(blocks, preChecked);
         _blockPopup.ShowUnder(btnBlockFilter);
@@ -1650,7 +1316,14 @@ public partial class MainForm : Form
         foreach (var b in selected)
             _selectedBlocks.Add(b);
 
+        _blockFilterInitialized = true;   // user has interacted with the popup
         UpdateBlockFilterCaption();
+    }
+    private void OnBlockFilterVisibilityChanged(object? sender, EventArgs e)
+    {
+        // Only rebuild when the popup is becoming invisible
+        if (_blockPopup != null && !_blockPopup.Visible)
+            RebuildBlockTabs();
     }
     private void UpdateBlockFilterCaption()
     {
@@ -1660,18 +1333,24 @@ public partial class MainForm : Form
             .Count();
 
         if (_selectedBlocks.Count == 0 || _selectedBlocks.Count == total)
-            btnBlockFilter.Text = $"All Blocks ({total}) ▾";
+            btnBlockFilter.Text = $"All Blocks ({total})";
         else if (_selectedBlocks.Count == 1)
-            btnBlockFilter.Text = $"{_selectedBlocks.First()} ▾";
+            btnBlockFilter.Text = $"{_selectedBlocks.First()}";
         else
-            btnBlockFilter.Text = $"{_selectedBlocks.Count} of {total} blocks ▾";
-    }
-    #endregion
+            btnBlockFilter.Text = $"{_selectedBlocks.Count} of {total} blocks";
 
+        // Ensure it renders properly
+        btnBlockFilter.AutoSize = false;
+        btnBlockFilter.TextAlign = ContentAlignment.MiddleCenter;
+        btnBlockFilter.Padding = new Padding(6, 2, 6, 2);
+        // Optional: bump height if it looks cramped
+        if (btnBlockFilter.Height < 28) btnBlockFilter.Height = 28;
+    }
     private void btnBlockFilter_Click(object sender, EventArgs e)
     {
         ShowBlockFilterPopup();
     }
+    #endregion
     #region SAVE LAST IMPORTED ACCOUNTS...
     private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
     {
@@ -1684,7 +1363,6 @@ public partial class MainForm : Form
             System.Diagnostics.Debug.WriteLine("Save failed: " + ex.Message);
         }
     }
-
     private void SaveAccountsToDisk()
     {
         var path = GetAccountsCachePath();
@@ -1746,6 +1424,7 @@ public partial class MainForm : Form
         UpdateBlockFilterCaption();
 
         btnGenerateWord.Enabled = btnPrintPdf.Enabled = _accounts.Count > 0;
+        btnPrintSelected.Enabled = _accounts.Count > 0;
         lblStatus.Text = $"Loaded {_accounts.Count} cached record(s) from previous session.";
 
         if (btnPrintPdf.Enabled && btnPrintPdf.Visible)
@@ -1756,12 +1435,10 @@ public partial class MainForm : Form
         }
     }
     #endregion
-
     private void exitToolStripMenuItem_Click(object sender, EventArgs e)
     {
         CloseForm();
     }
-
     private void CloseForm()
     {
         var result = MessageBox.Show(

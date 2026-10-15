@@ -46,7 +46,16 @@ namespace StatementOfAccountPrinting
                 clbBlockFilter.Items.Clear();
                 foreach (var b in blocks)
                 {
-                    bool isChecked = checkedSet == null || checkedSet.Contains(b);
+                    // Rules:
+                    //   checkedBlocks == null          → check all (default state)
+                    //   checkedBlocks has items        → check only those
+                    //   checkedBlocks is empty set     → check nothing
+                    bool isChecked;
+                    if (checkedSet == null)
+                        isChecked = true;
+                    else
+                        isChecked = checkedSet.Contains(b);
+
                     clbBlockFilter.Items.Add(b, isChecked);
                 }
             }

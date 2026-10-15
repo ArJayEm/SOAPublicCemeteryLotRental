@@ -46,5 +46,17 @@ namespace StatementOfAccountPrinting.Properties {
                 this["PaperSize"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("PDF")]
+        public string ExportFormat {
+            get {
+                return ((string)(this["ExportFormat"]));
+            }
+            set {
+                this["ExportFormat"] = value;
+            }
+        }
     }
 }
