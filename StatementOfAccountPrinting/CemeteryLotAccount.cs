@@ -8,7 +8,7 @@ namespace StatementOfAccountPrinting;
 ///   1. Add a property below, e.g.:
 ///        public string NewField { get; set; } = string.Empty;
 ///
-///   2. Map it in MainForm.btnImportExcel_Click:
+///   2. Map it in MainForm.toolStripButtonImportExcel_Click:
 ///        NewField = row.Cell(11).GetString().Trim(),
 ///
 ///   3. Use it in WordTemplateService.ToPlaceholders() and in
@@ -22,7 +22,6 @@ namespace StatementOfAccountPrinting;
 /// </summary>
 public class CemeteryLotAccount
 {
-    //public string Date { get; set; } = string.Empty;
     public string LesseeName { get; set; } = string.Empty;
     public string Address { get; set; } = string.Empty;
     public string LotBlockNumber { get; set; } = string.Empty;
@@ -32,5 +31,17 @@ public class CemeteryLotAccount
     public string Surcharge { get; set; } = string.Empty;
     public string Interest { get; set; } = string.Empty;
     public string TotalAmountDue { get; set; } = string.Empty;
-    public string DateGenerated { get; set; } = string.Empty;
+
+    public static readonly Dictionary<string, string> ColumnHeaders = new()
+    {
+        [nameof(CemeteryLotAccount.LesseeName)] = "Lessee",
+        [nameof(CemeteryLotAccount.NameOfDeceased)] = "Deceased",
+        [nameof(CemeteryLotAccount.Address)] = "Address",
+        [nameof(CemeteryLotAccount.LotBlockNumber)] = "Block / Lot",
+        [nameof(CemeteryLotAccount.AreaSqm)] = "Area (sq.m.)",
+        [nameof(CemeteryLotAccount.RentalOrRenewalFee)] = "Rental / Renewal Fee",
+        [nameof(CemeteryLotAccount.Surcharge)] = "Surcharge",
+        [nameof(CemeteryLotAccount.Interest)] = "Interest",
+        [nameof(CemeteryLotAccount.TotalAmountDue)] = "Total Amount Due",
+    };
 }

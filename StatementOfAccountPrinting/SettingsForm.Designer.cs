@@ -37,8 +37,11 @@
             btnCancel = new Button();
             groupBox1 = new GroupBox();
             groupBox2 = new GroupBox();
+            groupBox3 = new GroupBox();
+            linkLabelClearCache = new LinkLabel();
             groupBox1.SuspendLayout();
             groupBox2.SuspendLayout();
+            groupBox3.SuspendLayout();
             SuspendLayout();
             // 
             // chkSkipZeroTotal
@@ -95,7 +98,7 @@
             btnSave.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnSave.DialogResult = DialogResult.OK;
             btnSave.FlatStyle = FlatStyle.System;
-            btnSave.Location = new Point(176, 177);
+            btnSave.Location = new Point(176, 221);
             btnSave.Name = "btnSave";
             btnSave.Size = new Size(75, 23);
             btnSave.TabIndex = 12;
@@ -108,7 +111,7 @@
             btnCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnCancel.DialogResult = DialogResult.Cancel;
             btnCancel.FlatStyle = FlatStyle.System;
-            btnCancel.Location = new Point(12, 177);
+            btnCancel.Location = new Point(12, 221);
             btnCancel.Name = "btnCancel";
             btnCancel.Size = new Size(75, 23);
             btnCancel.TabIndex = 13;
@@ -117,12 +120,11 @@
             // 
             // groupBox1
             // 
-            groupBox1.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             groupBox1.Controls.Add(lblExportFormat);
             groupBox1.Controls.Add(cmbPaperSize);
             groupBox1.Controls.Add(label1);
             groupBox1.Controls.Add(cmbExportFormat);
-            groupBox1.Location = new Point(12, 71);
+            groupBox1.Location = new Point(12, 66);
             groupBox1.Name = "groupBox1";
             groupBox1.Size = new Size(243, 85);
             groupBox1.TabIndex = 14;
@@ -139,14 +141,36 @@
             groupBox2.TabStop = false;
             groupBox2.Text = "General";
             // 
+            // groupBox3
+            // 
+            groupBox3.Controls.Add(linkLabelClearCache);
+            groupBox3.Location = new Point(13, 157);
+            groupBox3.Name = "groupBox3";
+            groupBox3.Size = new Size(236, 45);
+            groupBox3.TabIndex = 16;
+            groupBox3.TabStop = false;
+            groupBox3.Text = "Storage";
+            // 
+            // linkLabelClearCache
+            // 
+            linkLabelClearCache.AutoSize = true;
+            linkLabelClearCache.Location = new Point(6, 19);
+            linkLabelClearCache.Name = "linkLabelClearCache";
+            linkLabelClearCache.Size = new Size(70, 15);
+            linkLabelClearCache.TabIndex = 0;
+            linkLabelClearCache.TabStop = true;
+            linkLabelClearCache.Text = "Clear Cache";
+            linkLabelClearCache.LinkClicked += linkLabelClearCache_LinkClicked;
+            // 
             // SettingsForm
             // 
             AcceptButton = btnSave;
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             CancelButton = btnCancel;
-            ClientSize = new Size(267, 212);
+            ClientSize = new Size(267, 256);
             ControlBox = false;
+            Controls.Add(groupBox3);
             Controls.Add(groupBox2);
             Controls.Add(groupBox1);
             Controls.Add(btnCancel);
@@ -160,6 +184,8 @@
             groupBox1.PerformLayout();
             groupBox2.ResumeLayout(false);
             groupBox2.PerformLayout();
+            groupBox3.ResumeLayout(false);
+            groupBox3.PerformLayout();
             ResumeLayout(false);
         }
 
@@ -174,5 +200,7 @@
         private Button btnCancel;
         private GroupBox groupBox1;
         private GroupBox groupBox2;
+        private GroupBox groupBox3;
+        private LinkLabel linkLabelClearCache;
     }
 }

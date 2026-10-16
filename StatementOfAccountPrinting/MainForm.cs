@@ -16,14 +16,11 @@ public partial class MainForm : Form
     private readonly List<Stream> _fontStreams = new();
     private BlockFilterPopup? _blockPopup;
     private readonly HashSet<string> _selectedBlocks = new(StringComparer.OrdinalIgnoreCase);
-    private bool _blockFilterInitialized;   // set true once the user has made a selection
+    private bool _blockFilterInitialized;
 
     public MainForm()
     {
         InitializeComponent();
-
-        FormClosing += MainForm_FormClosing;
-        btnPrintSelected.Click += btnPrintSelected_Click;
 
         var wa = Screen.FromControl(this).WorkingArea;
 
@@ -37,34 +34,39 @@ public partial class MainForm : Form
 
         Text = AppTitle;
         //dgvData.DataSource = _accounts;
-        //RebuildBlockTabs();
+        //RebuildBlockTabsAsync();
         QuestPDF.Settings.License = LicenseType.Community;
         RegisterFonts();
 
-        ToolTip toolTip = new ToolTip();
-        toolTip.SetToolTip(btnBlockFilter, "Select Blocks to Print");
-        toolTip.SetToolTip(btnPrintPdf, "Export as PDF");
-        toolTip.SetToolTip(btnPrintSelected, "Print selected row(s) from the active tab");
+        //ToolTip toolTip = new ToolTip();
+        //toolTip.SetToolTip(toolStripMenuItemBlockFilter, "Select Blocks to Print");
+        //toolTip.SetToolTip(toolStripSplitButtonExport, "Export as PDF");
+        //toolTip.SetToolTip(toolStripMenuItemExportSelected, "Print selected row(s) from the active tab");
 
-        var savedFormat = Properties.Settings.Default.ExportFormat;
-        btnPrintPdf.Text = $"Export as {savedFormat}";
+        var isWordExportEnabled = Properties.Settings.Default.EnableWordExport;
+        var savedFormat = !isWordExportEnabled ? "PDF" : Properties.Settings.Default.ExportFormat;
+        toolStripSplitButtonExport.Text = $"Export All as {savedFormat}";
         bool isPdf = savedFormat == "PDF";
-        fileToolStripMenuItem.Visible = !isPdf;
-    }
+        Bitmap bmp = isPdf ? Properties.Resources.pdf : Properties.Resources.doc;
+        toolStripSplitButtonExport.Image = bmp;
+        //fileToolStripMenuItem.Enabled = !isPdf;
 
+        importTemplateToolStripMenuItem.Visible = isWordExportEnabled;
+        exportTemplateToolStripMenuItem.Visible = isWordExportEnabled;
+        toolStripSeparator1.Visible = isWordExportEnabled;
+    }
     private async void MainForm_Shown(object sender, EventArgs e)
     {
         await LoadAccountsFromDiskAsync();
     }
     private void RegisterFonts()
     {
-        // ── Calibri (existing) ──
         foreach (var path in new[]
         {
-        "Fonts/calibri.ttf",
-        "Fonts/calibrib.ttf",
-        "Fonts/calibrii.ttf",
-    })
+            "Resources/Fonts/calibri.ttf",
+            "Resources/Fonts/calibrib.ttf",
+            "Resources/Fonts/calibrii.ttf",
+        })
         {
             var stream = File.OpenRead(path);
             _fontStreams.Add(stream);
@@ -83,117 +85,151 @@ public partial class MainForm : Form
             FontManager.RegisterFontFromStream(stream);
         }
     }
-    private void RebuildBlockTabs()
+    private async Task RebuildBlockTabsAsync()
     {
-        // Preserve the currently selected block, if any
-        string? current = tabBlocks.SelectedTab?.Tag as string;
+        if (_accounts.Count == 0)
+        {
+            tabBlocks.TabPages.Clear();
+            return;
+        }
 
-        tabBlocks.TabPages.Clear();
+        bool skipZero = Properties.Settings.Default.SkipZeroTotal;
 
-        if (_accounts.Count == 0) return;
-
-        // ── Determine which blocks should be visible ──
-        var allBlockNames = _accounts
-            .Select(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
-                            ? "(No Block)"
-                            : a.LotBlockNumber.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        // If nothing is selected, or everything is selected → show all
-        bool showAll = _selectedBlocks.Count == 0
-               || _selectedBlocks.Count >= allBlockNames.Count;
-
-        var visibleBlocks = showAll
-            ? allBlockNames
-            : allBlockNames.Where(b => _selectedBlocks.Contains(b)).ToList();
-
-        // ── Group only the visible blocks ──
+        // Group first — cheap, can happen on UI thread
         var groups = _accounts
-            .Where(a =>
-            {
-                var key = string.IsNullOrWhiteSpace(a.LotBlockNumber)
-                            ? "(No Block)"
-                            : a.LotBlockNumber.Trim();
-                return visibleBlocks.Contains(key, StringComparer.OrdinalIgnoreCase);
-            })
+            .Where(a => !skipZero || !IsZeroTotal(a.TotalAmountDue))
             .GroupBy(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
                             ? "(No Block)"
                             : a.LotBlockNumber.Trim())
-            .OrderBy(g => ExtractBlockNumber(g.Key))          // 1, 2, 10, 100, …
+            .OrderBy(g => ExtractBlockNumber(g.Key))
             .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        foreach (var group in groups)
+        // Apply the visible-block filter
+        var allBlockNames = groups.Select(g => g.Key).ToList();
+        bool showAll = _selectedBlocks.Count == 0
+                       || _selectedBlocks.Count >= allBlockNames.Count;
+
+        var visibleGroups = showAll
+            ? groups
+            : groups.Where(g => _selectedBlocks.Contains(g.Key)).ToList();
+
+        // Preserve current tab
+        string? current = tabBlocks.SelectedTab?.Tag as string;
+        lblStatus.Text = "Rebuilding tabs…";
+
+        bool ok = await ProgressDialog.RunAsync(this, "Rebuilding tabs…", async progress =>
         {
-            var page = new TabPage
+            await Task.Run(() =>
             {
-                Text = $"{group.Key} ({group.Count()})",
-                Tag = group.Key,
-                Padding = new Padding(4)
-            };
+                // Build each page on the background thread
+                var builtPages = new List<TabPage>();
 
-            // A binding list scoped to this block, so the grid updates as items change
-            var blockList = new BindingList<CemeteryLotAccount>(group.ToList());
-
-            var grid = new DataGridView
-            {
-                Dock = DockStyle.Fill,
-                AutoGenerateColumns = true,
-                ReadOnly = true,
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                MultiSelect = true,           // ← multi-select support
-                DataSource = blockList
-            };
-
-            grid.SelectionChanged += (s, e) =>
-            {
-                btnPrintSelected.Enabled = grid.SelectedRows.Count > 0;
-            };
-
-            // Wire the context menu
-            var menu = new ContextMenuStrip();
-            menu.Items.Add("Print Selected Record(s)", null,
-                (s, e) => btnPrintSelected_Click(s, e));
-            grid.ContextMenuStrip = menu;
-
-            page.Controls.Add(grid);
-            tabBlocks.TabPages.Add(page);
-        }
-
-        // ── Subscribe ONCE for the tab-change event (not inside the loop) ──
-        tabBlocks.SelectedIndexChanged -= TabBlocks_SelectedIndexChanged;
-        tabBlocks.SelectedIndexChanged += TabBlocks_SelectedIndexChanged;
-
-        // Restore previous selection if still present
-        if (current != null)
-        {
-            foreach (TabPage p in tabBlocks.TabPages)
-            {
-                if (string.Equals(p.Tag as string, current, StringComparison.OrdinalIgnoreCase))
+                for (int i = 0; i < visibleGroups.Count; i++)
                 {
-                    tabBlocks.SelectedTab = p;
-                    break;
+                    var group = visibleGroups[i];
+
+                    progress.Report((
+                        (int)((i / (double)visibleGroups.Count) * 100),
+                        $"Building tab {i + 1} of {visibleGroups.Count} — {group.Key}"));
+
+                    var page = new TabPage
+                    {
+                        Text = $"{group.Key} ({group.Count()})",
+                        Tag = group.Key,
+                        Padding = new Padding(4)
+                    };
+
+                    var blockList = new BindingList<CemeteryLotAccount>(group.ToList());
+
+                    var grid = new DataGridView
+                    {
+                        Dock = DockStyle.Fill,
+                        AutoGenerateColumns = true,
+                        ReadOnly = true,
+                        AllowUserToAddRows = false,
+                        AllowUserToDeleteRows = false,
+                        AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells,
+                        SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                        MultiSelect = true,
+                        DataSource = blockList
+                    };
+
+                    // ✅ Friendly headers as columns are auto-generated
+                    grid.ColumnAdded += (s, e) =>
+                    {
+                        var prop = e.Column.DataPropertyName;
+                        if (string.IsNullOrEmpty(prop)) return;
+
+                        e.Column.HeaderText = CemeteryLotAccount.ColumnHeaders
+                            .TryGetValue(prop, out var label)
+                                ? label
+                                : SplitCamelCase(prop);
+                    };
+
+                    var menu = new ContextMenuStrip();
+                    menu.Items.Add("Print Selected Record(s)", null,
+                        (s, e) => toolStripRightClickExportSelected_Click(s, e));
+                    grid.ContextMenuStrip = menu;
+
+                    page.Controls.Add(grid);
+                    builtPages.Add(page);
                 }
-            }
-        }
 
-        // Fallback: if the previous tab is gone, select the first available tab
-        if (tabBlocks.TabPages.Count > 0 && tabBlocks.SelectedTab == null)
-            tabBlocks.SelectedTab = tabBlocks.TabPages[0];
+                // Hand the finished pages back to the UI thread
+                tabBlocks.Invoke(new Action(() =>
+                {
+                    tabBlocks.SuspendLayout();
+                    try
+                    {
+                        tabBlocks.TabPages.Clear();
+                        foreach (var p in builtPages)
+                        {
+                            // Re-hook selection handler now that the page is on the UI thread
+                            var grid = p.Controls.OfType<DataGridView>().FirstOrDefault();
+                            if (grid != null)
+                            {
+                                grid.SelectionChanged += (s, e) =>
+                                    toolStripMenuItemExportSelected.Enabled = grid.SelectedRows.Count > 0;
+                            }
 
-        // If there are no tabs at all (e.g., a filter matched nothing), disable print
-        if (tabBlocks.TabPages.Count == 0)
-            btnPrintSelected.Enabled = false;
+                            tabBlocks.TabPages.Add(p);
+                        }
+
+                        // Restore previous tab if still present
+                        if (current != null)
+                        {
+                            foreach (TabPage p in tabBlocks.TabPages)
+                            {
+                                if (string.Equals(p.Tag as string, current,
+                                                  StringComparison.OrdinalIgnoreCase))
+                                {
+                                    tabBlocks.SelectedTab = p;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (tabBlocks.TabPages.Count > 0 && tabBlocks.SelectedTab == null)
+                            tabBlocks.SelectedTab = tabBlocks.TabPages[0];
+
+                        toolStripMenuItemExportSelected.Enabled = tabBlocks.TabPages.Count > 0
+                            && GetActiveGrid()?.SelectedRows.Count > 0;
+                    }
+                    finally
+                    {
+                        tabBlocks.ResumeLayout();
+                    }
+                }));
+
+                progress.Report((100, "Done."));
+            });
+        }, keepOpenWhenDone: false);
     }
-
     private void TabBlocks_SelectedIndexChanged(object? sender, EventArgs e)
     {
         var g = GetActiveGrid();
-        btnPrintSelected.Enabled = g?.SelectedRows.Count > 0;
+        toolStripMenuItemExportSelected.Enabled = g?.SelectedRows.Count > 0;
     }
     private DataGridView? GetActiveGrid()
     {
@@ -215,12 +251,15 @@ public partial class MainForm : Form
             .Cast<CemeteryLotAccount>()
             .ToList();
     }
-    private async void btnPrintSelected_Click(object sender, EventArgs e)
+    private async void toolStripMenuItemExportSelected_Click(object sender, EventArgs e)
     {
-        btnImportExcel.Enabled = false;
-        btnGenerateWord.Enabled = false;
-        btnPrintPdf.Enabled = false;
-        btnPrintSelected.Enabled = false;
+        PrintSelected();
+    }
+    private async void PrintSelected()
+    {
+        toolStripButtonImportExcel.Enabled = false;
+        toolStripSplitButtonExport.Enabled = false;
+        toolStripMenuItemExportSelected.Enabled = false;
 
         try
         {
@@ -285,7 +324,7 @@ public partial class MainForm : Form
             // ── Run the export with progress ──
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
-            await ProgressDialog.RunAsync(this,
+            bool ok = await ProgressDialog.RunAsync(this,
                 isWord ? "Generating DOCX…" : "Generating PDF…",
                 async progress =>
                 {
@@ -309,6 +348,13 @@ public partial class MainForm : Form
                 }, keepOpenWhenDone: false);
 
             sw.Stop();
+
+            if (!ok)
+            {
+                lblStatus.Text = $"Export failed after {FormatElapsed(sw.Elapsed)}";
+                return;   // ← no prompt
+            }
+
             lblStatus.Text =
                 $"Saved {selected.Count} record(s) as {exportFormat} in {FormatElapsed(sw.Elapsed)} → {filePath}";
 
@@ -321,10 +367,9 @@ public partial class MainForm : Form
         }
         finally
         {
-            btnImportExcel.Enabled = true;
-            btnGenerateWord.Enabled = _accounts.Count > 0;
-            btnPrintPdf.Enabled = _accounts.Count > 0;
-            btnPrintSelected.Enabled = _accounts.Count > 0;
+            toolStripButtonImportExcel.Enabled = _accounts.Count > 0;
+            toolStripSplitButtonExport.Enabled = _accounts.Count > 0;
+            toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;
         }
     }
     private static int ExtractBlockNumber(string name)
@@ -363,16 +408,9 @@ public partial class MainForm : Form
         allPage.Controls.Add(grid);
         tabBlocks.TabPages.Insert(0, allPage);
     }
-
     #region IMPORT...
-    private async void btnImportExcel_Click(object sender, EventArgs e)
+    private async void toolStripButtonImportExcel_Click(object sender, EventArgs e)
     {
-        btnImportExcel.Enabled = false;
-        btnGenerateWord.Enabled = false;
-        btnPrintPdf.Enabled = false;
-        btnPrintSelected.Enabled = false;   // ← add this
-        btnBlockFilter.Enabled = false;
-
         using var ofd = new OpenFileDialog
         {
             Title = "Select Excel file",
@@ -380,107 +418,109 @@ public partial class MainForm : Form
         };
         if (ofd.ShowDialog() != DialogResult.OK) return;
 
+        toolStripButtonImportExcel.Enabled = false;
+        toolStripSplitButtonExport.Enabled = false;
+        toolStripMenuItemBlockFilter.Enabled = false;
+        //toolStripMenuItemExportSelected.Enabled = false;   // ← add this
+        //toolStripMenuItemBlockFilter.Enabled = false;
+
         var filePath = ofd.FileName;
         var imported = new List<CemeteryLotAccount>();   // ← LOCAL list, not _accounts
 
-        btnImportExcel.Enabled = false;
+        // ── Run the export with progress ──
+        var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        try
+        bool ok = await ProgressDialog.RunAsync(this, "Importing Excel…", async progress =>
         {
-            await ProgressDialog.RunAsync(this, "Importing Excel…", async progress =>
+            await Task.Run(() =>
             {
-                await Task.Run(() =>
+                progress.Report((0, "Opening workbook…"));
+
+                using var wb = new XLWorkbook(filePath);
+
+                foreach (var ws in wb.Worksheets)
                 {
-                    progress.Report((0, "Opening workbook…"));
+                    var sheetname = GetSheetName(ws);
+                    if (!sheetname.StartsWith("BLOCK") ||
+                        !ws.Name.TrimStart().StartsWith("BLOCK", StringComparison.OrdinalIgnoreCase))
+                        continue;
 
-                    using var wb = new XLWorkbook(filePath);
+                    var used = ws.RangeUsed();
+                    if (used == null) continue;
 
-                    foreach (var ws in wb.Worksheets)
+                    int firstRow = used.FirstRow().RowNumber();
+                    int lastRow = used.LastRow().RowNumber();
+
+                    for (int rowNum = firstRow; rowNum <= lastRow; rowNum++)
                     {
-                        var sheetname = GetSheetName(ws);
-                        if (!sheetname.StartsWith("BLOCK") ||
-                            !ws.Name.TrimStart().StartsWith("BLOCK", StringComparison.OrdinalIgnoreCase))
-                            continue;
+                        var row = ws.Row(rowNum);
 
-                        var used = ws.RangeUsed();
-                        if (used == null) continue;
+                        var idxCell = row.Cell("A");
+                        if (idxCell.IsEmpty()) continue;
+                        if (!idxCell.Value.IsNumber) continue;
 
-                        int firstRow = used.FirstRow().RowNumber();
-                        int lastRow = used.LastRow().RowNumber();
+                        var lessee = row.Cell("B").GetString().Trim();
+                        if (string.IsNullOrWhiteSpace(lessee)) continue;
 
-                        for (int rowNum = firstRow; rowNum <= lastRow; rowNum++)
+                        decimal rental = ParseNum(row, "V") + ParseNum(row, "W") + ParseNum(row, "X");
+                        decimal surcharge = ParseNum(row, "Z") + ParseNum(row, "AA") + ParseNum(row, "AB");
+                        decimal interest = ParseNum(row, "AD") + ParseNum(row, "AE") + ParseNum(row, "AF");
+                        decimal total = rental + surcharge + interest;
+
+                        // ⬇ Add to the LOCAL list, not _accounts
+                        imported.Add(new CemeteryLotAccount
                         {
-                            var row = ws.Row(rowNum);
-
-                            var idxCell = row.Cell("A");
-                            if (idxCell.IsEmpty()) continue;
-                            if (!idxCell.Value.IsNumber) continue;
-
-                            var lessee = row.Cell("B").GetString().Trim();
-                            if (string.IsNullOrWhiteSpace(lessee)) continue;
-
-                            decimal rental = ParseNum(row, "V") + ParseNum(row, "W") + ParseNum(row, "X");
-                            decimal surcharge = ParseNum(row, "Z") + ParseNum(row, "AA") + ParseNum(row, "AB");
-                            decimal interest = ParseNum(row, "AD") + ParseNum(row, "AE") + ParseNum(row, "AF");
-                            decimal total = rental + surcharge + interest;
-
-                            // ⬇ Add to the LOCAL list, not _accounts
-                            imported.Add(new CemeteryLotAccount
-                            {
-                                DateGenerated = DateTime.Today.ToString("MMMM dd, yyyy"),
-                                LesseeName = lessee,
-                                NameOfDeceased = row.Cell("C").GetString().Trim(),
-                                Address = row.Cell("D").GetString().Trim(),
-                                LotBlockNumber = sheetname,
-                                AreaSqm = row.Cell("E").GetString().Trim(),
-                                RentalOrRenewalFee = rental.ToString("0.00"),
-                                Surcharge = surcharge.ToString("0.00"),
-                                Interest = interest.ToString("0.00"),
-                                TotalAmountDue = total.ToString("0.00"),
-                            });
-                        }
+                            LesseeName = lessee,
+                            NameOfDeceased = row.Cell("C").GetString().Trim(),
+                            Address = row.Cell("D").GetString().Trim(),
+                            LotBlockNumber = sheetname,
+                            AreaSqm = row.Cell("E").GetString().Trim(),
+                            RentalOrRenewalFee = rental.ToString("0.00"),
+                            Surcharge = surcharge.ToString("0.00"),
+                            Interest = interest.ToString("0.00"),
+                            TotalAmountDue = total.ToString("0.00"),
+                        });
                     }
+                }
 
-                    progress.Report((100, "Finishing up…"));
-                });
-            }, keepOpenWhenDone: false);
+                progress.Report((100, "Finishing up…"));
+            });
+        }, keepOpenWhenDone: false);
 
-            // ── Back on the UI thread — now safe to touch _accounts and dgvData ──
-            _accounts.Clear();
-            foreach (var a in imported)
-                _accounts.Add(a);
+        sw.Stop();
 
-            //PopulateBlockFilter();
-            RebuildBlockTabs();
-            UpdateBlockFilterCaption();
-            SaveAccountsToDisk();
+        // ── Back on the UI thread — now safe to touch _accounts and dgvData ──
+        _accounts.Clear();
+        foreach (var a in imported)
+            _accounts.Add(a);
 
-            btnGenerateWord.Enabled = btnPrintPdf.Enabled = _accounts.Count > 0;
-            btnPrintSelected.Enabled = _accounts.Count > 0;   // ← add this
-            lblStatus.Text = $"Imported {_accounts.Count} row(s) from " +
-                             $"{Path.GetFileName(filePath)}.";
+        //PopulateBlockFilter();
+        RebuildBlockTabsAsync();
+        UpdateBlockFilterCaption();
+        SaveAccountsToDisk();
 
-            if (btnPrintPdf.Enabled && btnPrintPdf.Visible)
-            {
-                btnBlockFilter.Enabled = true;
-                btnPrintPdf.Focus();
-                btnPrintPdf.Select();
-            }
-        }
-        catch (Exception ex)
+        toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;   // ← add this
+        lblStatus.Text = $"Imported {_accounts.Count} row(s) from " +
+                         $"{Path.GetFileName(filePath)}.";
+
+        if (toolStripSplitButtonExport.Enabled && toolStripSplitButtonExport.Visible)
         {
-            ShowError("Import failed", ex);
+            toolStripMenuItemBlockFilter.Enabled = true;
+            toolStripSplitButtonExport.Select();
         }
-        finally
+
+        toolStripButtonImportExcel.Enabled = _accounts.Count > 0;
+        toolStripSplitButtonExport.Enabled = _accounts.Count > 0;
+        toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
+        //toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;
+        //toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
+
+        if (!ok)
         {
-            btnImportExcel.Enabled = true;
-            btnGenerateWord.Enabled = _accounts.Count > 0;
-            btnPrintPdf.Enabled = _accounts.Count > 0;
-            btnPrintSelected.Enabled = _accounts.Count > 0;
-            btnBlockFilter.Enabled = _accounts.Count > 0;
+            lblStatus.Text = $"Export failed after {FormatElapsed(sw.Elapsed)}";
+            return;   // ← no prompt
         }
     }
-    #endregion
     private static decimal ParseNum(IXLRow row, string columnLetter)
     {
         try
@@ -569,7 +609,6 @@ public partial class MainForm : Form
             return string.Empty;
         }
     }
-
     private static string GetCellByLetter(IXLRangeRow row, string columnLetter)
     {
         try
@@ -583,7 +622,6 @@ public partial class MainForm : Form
             return string.Empty;
         }
     }
-
     private static string Norm(string s)
     {
         if (string.IsNullOrEmpty(s)) return string.Empty;
@@ -595,8 +633,6 @@ public partial class MainForm : Form
         }
         return sb.ToString();
     }
-
-    // Get a meaningful sheet name (falls back to A2 title if tab is generic)
     private static string GetSheetName(IXLWorksheet ws)
     {
         var tab = ws.Name?.Trim() ?? string.Empty;
@@ -618,16 +654,34 @@ public partial class MainForm : Form
 
         return string.IsNullOrWhiteSpace(cleaned) ? tab : cleaned;
     }
+    private static string SplitCamelCase(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return input ?? "";
 
-    // ──────────── 2. Create starter Word template ────────────
+        // Insert a space before each capital letter that follows a lowercase letter or digit
+        var spaced = System.Text.RegularExpressions.Regex.Replace(
+            input,
+            @"(?<=[a-z0-9])([A-Z])",
+            " $1");
+
+        // Also handle digits glued to letters: "AreaSqm2" → "Area Sqm 2"
+        spaced = System.Text.RegularExpressions.Regex.Replace(
+            spaced,
+            @"(?<=[A-Za-z])(\d)",
+            " $1");
+
+        return spaced.Trim();
+    }
+    #endregion
     private void btnCreateTemplate_Click(object sender, EventArgs e)
     {
-        ExportTemplate();
+        ExportDocxTemplate();
     }
-    private void ExportTemplate()
+    private void ExportDocxTemplate()
     {
         using var sfd = new SaveFileDialog
         {
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             Title = "Save blank template as",
             FileName = WordTemplateService.TemplateFileName,
             DefaultExt = "docx",
@@ -638,7 +692,7 @@ public partial class MainForm : Form
 
         if (sfd.ShowDialog() != DialogResult.OK) return;
 
-        exportTemplateToolStripMenuItem.Enabled = false;
+        //exportTemplateToolStripMenuItem.Enabled = false;
         Cursor = Cursors.WaitCursor;
         try
         {
@@ -672,19 +726,14 @@ public partial class MainForm : Form
         finally
         {
             Cursor = Cursors.Default;
-            exportTemplateToolStripMenuItem.Enabled = true;
+            //exportTemplateToolStripMenuItem.Enabled = true;
         }
-    }
-
-    // ───── 3. Fill template → one .docx statement per row ─────
-    private void btnGenerateWord_Click(object sender, EventArgs e)
-    {
-        ExportAsWord();
     }
     private async Task ExportAsWord()
     {
         using var sfd = new SaveFileDialog
         {
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             Title = "Save statements as",
             FileName = $"Statements_{DateTime.Now:yyyyMMdd_HHmmss}.docx",
             DefaultExt = "docx",
@@ -720,28 +769,12 @@ public partial class MainForm : Form
             ShowError("Word generation failed", ex);
         }
     }
-    private async void btnPrintPdf_Click(object sender, EventArgs e)
+    private async void toolStripRightClickExportSelected_Click(object sender, EventArgs e)
     {
-        string format = Properties.Settings.Default.ExportFormat ?? "PDF";
-
-        if (string.Equals(format, "DOCX", StringComparison.OrdinalIgnoreCase))
-        {
-            ExportAsWord();
-        }
-        else
-        {
-            await ExportAsPdfAsync();
-        }
+        PrintSelected();
     }
-
-    private async Task ExportAsPdfAsync()
+    private async Task ExportAllAsPdfAsync(bool skipZero = false, bool onlyZero = false)
     {
-        btnImportExcel.Enabled = false;
-        btnGenerateWord.Enabled = false;
-        btnPrintPdf.Enabled = false;
-        btnPrintSelected.Enabled = false;   // ← add this
-        btnBlockFilter.Enabled = false;
-
         if (_accounts.Count == 0)
         {
             MessageBox.Show("No accounts to export.", "PDF",
@@ -750,7 +783,10 @@ public partial class MainForm : Form
         }
 
         string paperSize = Properties.Settings.Default.PaperSize ?? "A4";
-        bool skipZero = Properties.Settings.Default.SkipZeroTotal;
+        //bool skipZero = Properties.Settings.Default.SkipZeroTotal;
+
+        // ── Build the filtered source as a List<CemeteryLotAccount> ──
+        List<CemeteryLotAccount> source = _accounts.ToList();
 
         using var fbd = new FolderBrowserDialog
         {
@@ -758,13 +794,16 @@ public partial class MainForm : Form
         };
         if (fbd.ShowDialog() != DialogResult.OK) return;
 
+        //toolStripButtonImportExcel.Enabled = false;
+        //toolStripSplitButtonExport.Enabled = false;
+        //toolStripMenuItemBlockFilter.Enabled = false;
+        //toolStripMenuItemExportSelected.Enabled = false;
+        //toolStripMenuItemBlockFilter.Enabled = false;
+
         var outputFolder = fbd.SelectedPath;
 
         // ── Read selected blocks from the popup's stored set ──
         var selectedBlocks = new HashSet<string>(_selectedBlocks, StringComparer.OrdinalIgnoreCase);
-
-        // ── Build the filtered source as a List<CemeteryLotAccount> ──
-        List<CemeteryLotAccount> source = _accounts.ToList();
 
         // 1) Block filter
         if (selectedBlocks.Count > 0)
@@ -796,6 +835,9 @@ public partial class MainForm : Form
         // 2) Skip-zero filter
         if (skipZero)
             source = source.Where(a => !IsZeroTotal(a.TotalAmountDue)).ToList();
+        // 2.5) Only-zero filter
+        if (skipZero)
+            source = source.Where(a => IsZeroTotal(a.TotalAmountDue)).ToList();
 
         if (source.Count == 0)
         {
@@ -816,106 +858,100 @@ public partial class MainForm : Form
         int totalBlocks = groups.Count;
         int totalRecords = source.Count;
 
-        btnImportExcel.Enabled = btnGenerateWord.Enabled = btnPrintPdf.Enabled = false;
-
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        try
+        bool ok = await ProgressDialog.RunAsync(this, "Generating PDFs…", async progress =>
         {
-            await ProgressDialog.RunAsync(this, "Generating PDFs…", async progress =>
+            var cts = new CancellationTokenSource();
+            int estimatedMs = Math.Max(1500, totalBlocks * 800);
+
+            var ticker = Task.Run(async () =>
             {
-                var cts = new CancellationTokenSource();
-                int estimatedMs = Math.Max(1500, totalBlocks * 800);
+                var inner = System.Diagnostics.Stopwatch.StartNew();
+                int lastPct = 0;
 
-                var ticker = Task.Run(async () =>
+                while (!cts.IsCancellationRequested && inner.ElapsedMilliseconds < estimatedMs)
                 {
-                    var inner = System.Diagnostics.Stopwatch.StartNew();
-                    int lastPct = 0;
+                    double ratio = inner.ElapsedMilliseconds / (double)estimatedMs;
+                    int pct = Math.Min(95, (int)(ratio * 95));
 
-                    while (!cts.IsCancellationRequested && inner.ElapsedMilliseconds < estimatedMs)
+                    if (pct > lastPct)
                     {
-                        double ratio = inner.ElapsedMilliseconds / (double)estimatedMs;
-                        int pct = Math.Min(95, (int)(ratio * 95));
-
-                        if (pct > lastPct)
-                        {
-                            lastPct = pct;
-                            int done = Math.Min(totalBlocks, (int)Math.Ceiling(ratio * totalBlocks));
-                            progress.Report((pct,
-                                $"Generating {done} of {totalBlocks} block PDFs…  ({FormatElapsed(sw.Elapsed)} elapsed)"));
-                        }
-
-                        try { await Task.Delay(50, cts.Token); }
-                        catch (TaskCanceledException) { break; }
+                        lastPct = pct;
+                        int done = Math.Min(totalBlocks, (int)Math.Ceiling(ratio * totalBlocks));
+                        progress.Report((pct,
+                            $"Generating {done} of {totalBlocks} block PDFs…  ({FormatElapsed(sw.Elapsed)} elapsed)"));
                     }
 
-                    if (!cts.IsCancellationRequested)
-                        progress.Report((95,
-                            $"Finalizing {totalBlocks} file(s)…  ({FormatElapsed(sw.Elapsed)} elapsed)"));
-                });
-
-                int generated = 0;
-                try
-                {
-                    await Task.Run(() =>
-                    {
-                        foreach (var group in groups)
-                        {
-                            string safeBlock = MakeSafeFileName(group.Key);
-                            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                            string fileName = $"Statements_{safeBlock}_{paperSize}_{timestamp}.pdf";
-                            string blockPath = Path.Combine(outputFolder, fileName);
-
-                            // Same template, only that block's rows
-                            CreatePdfPerBlock(blockPath, paperSize, skipZero, group.ToList());
-
-                            generated++;
-                        }
-                    });
-                }
-                finally
-                {
-                    cts.Cancel();
-                    try { await ticker; } catch { }
+                    try { await Task.Delay(50, cts.Token); }
+                    catch (TaskCanceledException) { break; }
                 }
 
-                progress.Report((100,
-                    $"PDF export complete.\n" +
-                    $"Folder      : {outputFolder}\n" +
-                    $"Blocks      : {generated} of {totalBlocks}\n" +
-                    $"Records     : {totalRecords} of {skippedZeroOrigCount}" +
-                        (skipZero ? $" (skipped ₱0.00)" : "") + "\n" +
-                    $"Paper size  : {paperSize}\n" +
-                    $"Elapsed time: {FormatElapsed(sw.Elapsed)}"));
+                if (!cts.IsCancellationRequested)
+                    progress.Report((95,
+                        $"Finalizing {totalBlocks} file(s)…  ({FormatElapsed(sw.Elapsed)} elapsed)"));
             });
 
-            sw.Stop();
-            lblStatus.Text = $"Saved {totalBlocks} block PDF(s) in {FormatElapsed(sw.Elapsed)} → {outputFolder}";
+            int generated = 0;
+            try
+            {
+                await Task.Run(() =>
+                {
+                    foreach (var group in groups)
+                    {
+                        string safeBlock = MakeSafeFileName(group.Key);
+                        string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                        string fileName = $"Statements_{safeBlock}_{paperSize}_{timestamp}.pdf";
+                        string blockPath = Path.Combine(outputFolder, fileName);
 
-            if (AskYesNo("Open the output folder?"))
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                { FileName = outputFolder, UseShellExecute = true });
+                        // Same template, only that block's rows
+                        CreatePdfPerBlock(blockPath, paperSize, skipZero, group.ToList());
 
-            // Reset block filter after export
-            _selectedBlocks.Clear();
-            _blockFilterInitialized = false;
-            UpdateBlockFilterCaption();
-        }
-        catch (Exception ex)
+                        generated++;
+                    }
+                });
+            }
+            finally
+            {
+                cts.Cancel();
+                try { await ticker; } catch { }
+            }
+
+            progress.Report((100,
+                $"PDF export complete.\n" +
+                $"Folder      : {outputFolder}\n" +
+                $"Blocks      : {generated} of {totalBlocks}\n" +
+                $"Records     : {totalRecords} of {skippedZeroOrigCount}" +
+                    (skipZero ? $" (skipped ₱0.00)" : "") + "\n" +
+                $"Paper size  : {paperSize}\n" +
+                $"Elapsed time: {FormatElapsed(sw.Elapsed)}"));
+        });
+
+        // Reset block filter after export
+        //_selectedBlocks.Clear();
+        //_blockFilterInitialized = false;
+        //UpdateBlockFilterCaption();
+
+        sw.Stop();
+
+        //toolStripButtonImportExcel.Enabled = _accounts.Count > 0;
+        //toolStripSplitButtonExport.Enabled = _accounts.Count > 0;
+        //toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
+        //toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;
+        //toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
+
+        if (!ok)
         {
-            sw.Stop();
-            ShowError($"PDF creation failed after {FormatElapsed(sw.Elapsed)}", ex);
+            lblStatus.Text = $"PDF creation failed after {FormatElapsed(sw.Elapsed)}";
+            return;   // ← no prompt
         }
-        finally
-        {
-            btnImportExcel.Enabled = true;
-            btnGenerateWord.Enabled = _accounts.Count > 0;
-            btnPrintPdf.Enabled = _accounts.Count > 0;
-            btnPrintSelected.Enabled = _accounts.Count > 0;
-            btnBlockFilter.Enabled = _accounts.Count > 0;
-        }
+
+        lblStatus.Text = $"Saved {totalBlocks} block PDF(s) in {FormatElapsed(sw.Elapsed)} → {outputFolder}";
+
+        if (AskYesNo("Open the output folder?"))
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            { FileName = outputFolder, UseShellExecute = true });
     }
-
     private static string FormatElapsed(TimeSpan t)
     {
         if (t.TotalHours >= 1) return $"{(int)t.TotalHours}h {t.Minutes}m {t.Seconds}s";
@@ -936,8 +972,8 @@ public partial class MainForm : Form
 
         // Resolve logos
         var baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        var logoLeft = Path.Combine(baseDir, "Templates", "Images", "navotas-logo-left.jpg");
-        var logoRight = Path.Combine(baseDir, "Templates", "Images", "blgf-logo-right.png");
+        var logoLeft = Path.Combine(baseDir, "Resources", "Images", "navotas-logo-left.jpg");
+        var logoRight = Path.Combine(baseDir, "Resources", "Images", "blgf-logo-right.png");
 
         byte[]? logoLeftBytes = File.Exists(logoLeft) ? File.ReadAllBytes(logoLeft) : null;
         byte[]? logoRightBytes = File.Exists(logoRight) ? File.ReadAllBytes(logoRight) : null;
@@ -946,6 +982,8 @@ public partial class MainForm : Form
         {
             foreach (var a in list)          // ← only the accounts passed in
             {
+                var dateGenerated = DateTime.Today.ToString("MMMM dd, yyyy");
+
                 doc.Page(page =>
                 {
                     // ── Same layout as your original CreatePdf ──
@@ -1018,7 +1056,7 @@ public partial class MainForm : Form
                         {
                             row.RelativeItem().Column(inf =>
                             {
-                                InfoLine(inf, "Date / Petsa: ", a.DateGenerated);
+                                InfoLine(inf, "Date / Petsa: ", dateGenerated);
                                 inf.Item().PaddingTop(12);
                                 InfoLine(inf, "Name of Lessee / Pangalan: ", a.LesseeName);
                                 InfoLine(inf, "Address / Tirahan: ", a.Address);
@@ -1242,10 +1280,15 @@ public partial class MainForm : Form
 
     private void OpenSettings()
     {
+        var isWordExportEnabled = Properties.Settings.Default.EnableWordExport;
+        var skipZeroTotal = Properties.Settings.Default.SkipZeroTotal;
+        var savedFormat = !isWordExportEnabled ? "PDF" : Properties.Settings.Default.ExportFormat;
+
         using var dlg = new SettingsForm(
-            Properties.Settings.Default.SkipZeroTotal,
+            this,
+            skipZeroTotal,
             Properties.Settings.Default.PaperSize,
-            Properties.Settings.Default.ExportFormat);
+            savedFormat);
 
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
@@ -1257,11 +1300,17 @@ public partial class MainForm : Form
         Properties.Settings.Default.Save();
 
         lblStatus.Text = "Settings saved.";
-        btnPrintPdf.Text = $"Export as {dlg.ExportFormat}";
+        toolStripSplitButtonExport.Text = $"Export All as {dlg.ExportFormat}";
         bool isPdf = dlg.ExportFormat == "PDF";
-        fileToolStripMenuItem.Visible = !isPdf;
+        Bitmap bmp = isPdf ? Properties.Resources.pdf : Properties.Resources.doc;
+        toolStripSplitButtonExport.Image = bmp;
+
+        if (skipZeroTotal != dlg.SkipZeroTotal)
+            RebuildBlockTabsAsync();
+
+        //fileToolStripMenuItem.Enabled = !isPdf;
     }
-    private static string GetAccountsCachePath()
+    public static string GetAccountsCachePath()
     {
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -1271,7 +1320,7 @@ public partial class MainForm : Form
     }
     private void exportTemplateToolStripMenuItem_Click_1(object sender, EventArgs e)
     {
-        ExportTemplate();
+        ExportDocxTemplate();
     }
     private void settingsToolStripMenuItem_Click(object sender, EventArgs e)
     {
@@ -1295,20 +1344,22 @@ public partial class MainForm : Form
             _blockPopup.VisibleChanged += OnBlockFilterVisibilityChanged;
         }
 
-        // Distinct block names, sorted naturally
-        var blocks = _accounts
-            .Select(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
+        // Group once, then emit (name, count) pairs in natural order
+        var blocksWithCounts = _accounts
+            .GroupBy(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
                             ? "(No Block)"
                             : a.LotBlockNumber.Trim())
-            .Distinct()
-            .OrderBy(b => ExtractBlockNumber(b))
-            .ThenBy(b => b, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Name: g.Key, Count: g.Count()))
+            .OrderBy(x => ExtractBlockNumber(x.Name))
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        IEnumerable<string>? preChecked = _blockFilterInitialized ? _selectedBlocks : null;
+        IEnumerable<string>? preChecked = _blockFilterInitialized
+            ? _selectedBlocks
+            : null;
 
-        _blockPopup.LoadBlocks(blocks, preChecked);
-        _blockPopup.ShowUnder(btnBlockFilter);
+        _blockPopup.LoadBlocks(blocksWithCounts, preChecked);
+        _blockPopup.ShowUnder(toolStripMenuItemBlockFilter);
     }
     private void OnBlockSelectionChanged(HashSet<string> selected)
     {
@@ -1323,7 +1374,9 @@ public partial class MainForm : Form
     {
         // Only rebuild when the popup is becoming invisible
         if (_blockPopup != null && !_blockPopup.Visible)
-            RebuildBlockTabs();
+        {
+            //RebuildBlockTabsAsync();
+        }
     }
     private void UpdateBlockFilterCaption()
     {
@@ -1333,20 +1386,20 @@ public partial class MainForm : Form
             .Count();
 
         if (_selectedBlocks.Count == 0 || _selectedBlocks.Count == total)
-            btnBlockFilter.Text = $"All Blocks ({total})";
+            toolStripMenuItemBlockFilter.Text = $"All Blocks ({total})";
         else if (_selectedBlocks.Count == 1)
-            btnBlockFilter.Text = $"{_selectedBlocks.First()}";
+            toolStripMenuItemBlockFilter.Text = $"{_selectedBlocks.First()}";
         else
-            btnBlockFilter.Text = $"{_selectedBlocks.Count} of {total} blocks";
+            toolStripMenuItemBlockFilter.Text = $"{_selectedBlocks.Count} of {total} blocks";
 
         // Ensure it renders properly
-        btnBlockFilter.AutoSize = false;
-        btnBlockFilter.TextAlign = ContentAlignment.MiddleCenter;
-        btnBlockFilter.Padding = new Padding(6, 2, 6, 2);
+        toolStripMenuItemBlockFilter.AutoSize = false;
+        toolStripMenuItemBlockFilter.TextAlign = ContentAlignment.MiddleCenter;
+        toolStripMenuItemBlockFilter.Padding = new Padding(6, 2, 6, 2);
         // Optional: bump height if it looks cramped
-        if (btnBlockFilter.Height < 28) btnBlockFilter.Height = 28;
+        if (toolStripMenuItemBlockFilter.Height < 28) toolStripMenuItemBlockFilter.Height = 28;
     }
-    private void btnBlockFilter_Click(object sender, EventArgs e)
+    private void toolStripMenuItemBlockFilter_Click(object sender, EventArgs e)
     {
         ShowBlockFilterPopup();
     }
@@ -1367,7 +1420,6 @@ public partial class MainForm : Form
     {
         var path = GetAccountsCachePath();
 
-        // Include DateGenerated so the cached snapshot stays accurate
         var options = new System.Text.Json.JsonSerializerOptions
         {
             WriteIndented = true
@@ -1375,6 +1427,20 @@ public partial class MainForm : Form
 
         var json = System.Text.Json.JsonSerializer.Serialize(_accounts.ToList(), options);
         File.WriteAllText(path, json);
+    }
+    public void ClearCachedRecords()
+    {
+        _accounts.Clear();
+        _selectedBlocks.Clear();
+        _blockFilterInitialized = false;
+
+        RebuildBlockTabsAsync();
+        UpdateBlockFilterCaption();
+
+        toolStripMenuItemBlockFilter.Enabled = false;
+        toolStripSplitButtonExport.Enabled = false;
+
+        lblStatus.Text = "Cached records cleared.";
     }
     private async Task LoadAccountsFromDiskAsync()
     {
@@ -1419,19 +1485,22 @@ public partial class MainForm : Form
         foreach (var a in loaded)
             _accounts.Add(a);
 
-        RebuildBlockTabs();
+        RebuildBlockTabsAsync();
         _selectedBlocks.Clear();
         UpdateBlockFilterCaption();
 
-        btnGenerateWord.Enabled = btnPrintPdf.Enabled = _accounts.Count > 0;
-        btnPrintSelected.Enabled = _accounts.Count > 0;
-        lblStatus.Text = $"Loaded {_accounts.Count} cached record(s) from previous session.";
+        toolStripButtonImportExcel.Enabled = _accounts.Count > 0;
+        toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
+        toolStripSplitButtonExport.Enabled = _accounts.Count > 0;
 
-        if (btnPrintPdf.Enabled && btnPrintPdf.Visible)
+        bool skipZero = Properties.Settings.Default.SkipZeroTotal;
+
+        lblStatus.Text = $"Loaded {_accounts.Count} cached record(s) from previous session.{(skipZero ? " (skipped ₱0.00)" : "")}";
+
+        if (toolStripSplitButtonExport.Enabled && toolStripSplitButtonExport.Visible)
         {
-            btnBlockFilter.Enabled = true;
-            btnPrintPdf.Focus();
-            btnPrintPdf.Select();
+            toolStripMenuItemBlockFilter.Enabled = true;
+            toolStripSplitButtonExport.Select();
         }
     }
     #endregion
@@ -1449,5 +1518,35 @@ public partial class MainForm : Form
 
         if (result == DialogResult.Yes)
             Close();
+    }
+
+    private void toolStripMenuItem1_Click(object sender, EventArgs e)
+    {
+
+    }
+
+    private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
+    {
+        using var dlg = new About();
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+    }
+
+    private void toolStripSplitButtonExport_Click(object sender, EventArgs e)
+    {
+    }
+
+    private void toolStripSplitButtonExport_ButtonClick(object sender, EventArgs e)
+    {
+        ExportAllAsPdfAsync();
+    }
+
+    private void exportAllskip000TotalAmountDueToolStripMenuItem_Click(object sender, EventArgs e)
+    {
+        ExportAllAsPdfAsync(skipZero: true);
+    }
+
+    private void exportAllonly000TotalAmountDueToolStripMenuItem_Click(object sender, EventArgs e)
+    {
+        ExportAllAsPdfAsync(onlyZero: true);
     }
 }

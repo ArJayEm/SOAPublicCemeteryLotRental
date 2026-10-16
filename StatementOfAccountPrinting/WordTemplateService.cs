@@ -14,7 +14,7 @@ using WUnderlineValues = DocumentFormat.OpenXml.Wordprocessing.UnderlineValues;
 public static class WordTemplateService
 {
     public const string TemplateFileName = "soa-public_cemetery_lot_rental.docx";
-    public const string TemplateFolder = "Templates";
+    public const string TemplateFolder = "Resources\\Templates";
 
     // ═════════════════════════════════════════════════════════════
     // RESOLVE TEMPLATE PATH
@@ -59,88 +59,96 @@ public static class WordTemplateService
 
         var templatePath = ResolveTemplatePath();
 
-        using (WordprocessingDocument templateDoc = WordprocessingDocument.Open(templatePath, true))
-        {
-            foreach (var section in templateDoc.MainDocumentPart.Document
-                         .Body.Elements<SectionProperties>())
-            {
-                var pageSize = section.GetFirstChild<PageSize>();
+        // 1) Copy the template to a writable temp file
+        var tempPath = Path.Combine(Path.GetTempPath(), $"soa_{Guid.NewGuid():N}.docx");
+        File.Copy(templatePath, tempPath, overwrite: true);
 
-                if (pageSize == null)
+        try
+        {
+            // 2) Open the TEMP copy (never the original template)
+            using (WordprocessingDocument templateDoc = WordprocessingDocument.Open(tempPath, isEditable: true))
+            {
+                var body = templateDoc.MainDocumentPart!.Document.Body!;
+
+                foreach (var section in body.Elements<SectionProperties>())
                 {
-                    pageSize = new PageSize();
-                    section.Append(pageSize);
+                    var pageSize = section.GetFirstChild<PageSize>();
+                    if (pageSize == null)
+                    {
+                        pageSize = new PageSize();
+                        section.Append(pageSize);
+                    }
+
+                    (pageSize.Width, pageSize.Height) = paperSize switch
+                    {
+                        "Legal" => (12240U, 20160U),
+                        "A4" => (11906U, 16838U),
+                        _ => (11906U, 16838U)
+                    };
                 }
 
-                (pageSize.Width, pageSize.Height) = paperSize switch
-                {
-                    "Legal" => (12240U, 20160U),
-                    "A4" => (11906U, 16838U),
-                    _ => (11906U, 16838U)
-                };
+                templateDoc.MainDocumentPart.Document.Save();
             }
 
-            templateDoc.MainDocumentPart.Document.Save();
-        }
+            // 3) Now the temp copy has the right page size. Fill it.
+            using var doc = WordprocessingDocument.Open(tempPath, isEditable: true);
+            var main = doc.MainDocumentPart!;
+            var body2 = main.Document.Body!;
 
-        if (File.Exists(outputPath)) File.Delete(outputPath);
-        File.Copy(templatePath, outputPath, overwrite: true);
+            var originalChildren = body2.ChildElements
+                .Select(e => e.CloneNode(true))
+                .ToList();
 
-        using var doc = WordprocessingDocument.Open(outputPath, isEditable: true);
-        var main = doc.MainDocumentPart!;
-        var body = main.Document.Body!;
+            body2.RemoveAllChildren();
 
-        // 1) Capture the original body content
-        var originalChildren = body.ChildElements
-            .Select(e => e.CloneNode(true))
-            .ToList();
-
-        // 2) Clear the body
-        body.RemoveAllChildren();
-
-        // 3) For each account, append a filled clone of the template body
-        for (int i = 0; i < accounts.Count; i++)
-        {
-            var account = accounts[i];
-            var map = ToPlaceholders(account);
-
-            foreach (var node in originalChildren)
+            for (int i = 0; i < accounts.Count; i++)
             {
-                var clone = node.CloneNode(true);
+                var account = accounts[i];
+                var map = ToPlaceholders(account);
 
-                // Collect the node itself (if it's a paragraph) plus any descendant paragraphs
-                var allParagraphs = clone.Descendants<WParagraph>().ToList();
-                if (clone is WParagraph self)
-                    allParagraphs.Insert(0, self);
-
-                foreach (var para in allParagraphs)
+                foreach (var node in originalChildren)
                 {
-                    // Only flatten when the paragraph contains a placeholder.
-                    // Paragraphs without placeholders keep their original runs and formatting.
-                    var text = string.Concat(para.Descendants<WText>().Select(t => t.Text));
-                    if (!text.Contains("{{"))
-                        continue;
+                    var clone = node.CloneNode(true);
 
-                    // Only flatten when there's more than one run
-                    // (a single run has no split placeholders to merge)
-                    if (para.Elements<WRun>().Count() > 1)
-                        FlattenRuns(para);
+                    var allParagraphs = clone.Descendants<WParagraph>().ToList();
+                    if (clone is WParagraph self)
+                        allParagraphs.Insert(0, self);
 
-                    ReplaceTokens(para, map);
+                    foreach (var para in allParagraphs)
+                    {
+                        var text = string.Concat(para.Descendants<WText>().Select(t => t.Text));
+                        if (!text.Contains("{{")) continue;
+
+                        if (para.Elements<WRun>().Count() > 1)
+                            FlattenRuns(para);
+
+                        ReplaceTokens(para, map);
+                    }
+
+                    body2.AppendChild(clone);
                 }
 
-                body.AppendChild(clone);
+                if (i < accounts.Count - 1)
+                {
+                    body2.AppendChild(new WParagraph(
+                        new WRun(new WBreak { Type = BreakValues.Page })));
+                }
             }
 
-            // 4) Page break between accounts (not after the last one)
-            if (i < accounts.Count - 1)
+            main.Document.Save();
+
+            // 4) Move the finished file to the requested output path
+            if (File.Exists(outputPath)) File.Delete(outputPath);
+            File.Move(tempPath, outputPath);
+        }
+        finally
+        {
+            // Clean up the temp file if anything failed
+            if (File.Exists(tempPath))
             {
-                body.AppendChild(new WParagraph(
-                    new WRun(new WBreak { Type = BreakValues.Page })));
+                try { File.Delete(tempPath); } catch { /* ignore */ }
             }
         }
-
-        main.Document.Save();
     }
 
     public static void FillTemplate(string templatePath, CemeteryLotAccount account, string outputPath)

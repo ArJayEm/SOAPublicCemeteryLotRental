@@ -58,5 +58,17 @@ namespace StatementOfAccountPrinting.Properties {
                 this["ExportFormat"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        public bool EnableWordExport {
+            get {
+                return ((bool)(this["EnableWordExport"]));
+            }
+            set {
+                this["EnableWordExport"] = value;
+            }
+        }
     }
 }

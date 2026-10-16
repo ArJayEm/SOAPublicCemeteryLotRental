@@ -1,8 +1,4 @@
-﻿using System;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-
-public class ProgressDialog : Form
+﻿public class ProgressDialog : Form
 {
     private ProgressBar _bar;
     private Label _label;
@@ -102,22 +98,22 @@ public class ProgressDialog : Form
     /// Runs the work; if keepOpenWhenDone is true, the dialog stays open
     /// until the user clicks Close. Only then does RunAsync return.
     /// </summary>
-    public static async Task RunAsync(
-        IWin32Window owner,
-        string title,
-        Func<IProgress<(int Pct, string Message)>, Task> work,
-        bool keepOpenWhenDone = true)
+    public static async Task<bool> RunAsync(
+    IWin32Window owner,
+    string title,
+    Func<IProgress<(int Pct, string Message)>, Task> work,
+    bool keepOpenWhenDone = true)
     {
         using var dlg = new ProgressDialog(title);
-
-        var progress = new Progress<(int Pct, string Message)>(p =>
-            dlg.Report(p.Pct, p.Message));
+        var progress = new Progress<(int Pct, string Message)>(p => dlg.Report(p.Pct, p.Message));
+        bool ok = false;
 
         dlg.Shown += async (s, e) =>
         {
             try
             {
                 await work(progress);
+                ok = true;
             }
             catch (Exception ex)
             {
@@ -127,13 +123,12 @@ public class ProgressDialog : Form
             }
             finally
             {
-                if (keepOpenWhenDone)
-                    dlg.ShowCloseButton();   // ← stays open until user clicks Close
-                else
-                    dlg.Close();
+                if (keepOpenWhenDone) dlg.ShowCloseButton();
+                else dlg.Close();
             }
         };
 
-        dlg.ShowDialog(owner);   // ← blocks until the form is closed
+        dlg.ShowDialog(owner);
+        return ok;
     }
 }

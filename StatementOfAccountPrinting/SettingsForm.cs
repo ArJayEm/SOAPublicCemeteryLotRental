@@ -2,21 +2,27 @@
 {
     public partial class SettingsForm : Form
     {
-        public event Action? CacheCleared;
+        private readonly MainForm? _mainForm;
         public bool SkipZeroTotal { get; private set; } = false;
         public string PaperSize { get; private set; } = "A4";
         public string ExportFormat { get; private set; } = "PDF";
+        public bool EnableWordExport { get; private set; } = false;
 
-        public SettingsForm(bool skipZeroTotal, string paperSize, string exportFormat)
+        public SettingsForm(MainForm mainForm, bool skipZeroTotal, string paperSize, string exportFormat)
         {
             InitializeComponent();
+
+            _mainForm = mainForm;
 
             if (chkSkipZeroTotal != null)
                 chkSkipZeroTotal.Checked = Properties.Settings.Default.SkipZeroTotal;
 
+            EnableWordExport = Properties.Settings.Default.EnableWordExport;
+
             var savedFormat = Properties.Settings.Default.ExportFormat;
             var formatIndex = cmbExportFormat.Items.IndexOf(savedFormat);
             cmbExportFormat.SelectedIndex = formatIndex >= 0 ? formatIndex : 0;   // default PDF
+            cmbExportFormat.Enabled = EnableWordExport;
 
             if (cmbPaperSize != null)
             {
@@ -35,8 +41,19 @@
             //UpdateCacheStatus();
         }
 
-        #region CLEAR CACHE...
-        private void btnClearCache_Click(object sender, EventArgs e)
+        private void cmbExportFormat_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            //cmbPaperSize.Enabled = cmbExportFormat.SelectedItem?.ToString() == "PDF";
+        }
+
+        private void btnOk_Click(object sender, EventArgs e)
+        {
+            SkipZeroTotal = chkSkipZeroTotal.Checked;
+            PaperSize = cmbPaperSize.SelectedItem.ToString() ?? "A4";
+            ExportFormat = cmbExportFormat.SelectedItem.ToString() ?? "PDF";
+        }
+
+        private void linkLabelClearCache_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
             var confirm = MessageBox.Show(
                 "Clear the cached imported records?\n\n" +
@@ -50,12 +67,11 @@
 
             try
             {
-                var path = GetAccountsCachePath();
+                var path = MainForm.GetAccountsCachePath();
                 if (File.Exists(path))
                     File.Delete(path);
 
-                // Notify MainForm to clear its in-memory list and grid
-                CacheCleared?.Invoke();
+                _mainForm?.ClearCachedRecords();
 
                 MessageBox.Show("Cache cleared.");
             }
@@ -67,38 +83,6 @@
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
-        }
-
-        //private void UpdateCacheStatus()
-        //{
-        //    var path = GetAccountsCachePath();
-        //    var message = File.Exists(path)
-        //        ? $"Cache file: {path}"
-        //        : "No cache file present.";
-
-        //    MessageBox.Show(message);
-        //}
-
-        private static string GetAccountsCachePath()
-        {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "StatementOfAccountPrinting");
-            Directory.CreateDirectory(dir);
-            return Path.Combine(dir, "accounts.json");
-        }
-        #endregion
-
-        private void cmbExportFormat_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            //cmbPaperSize.Enabled = cmbExportFormat.SelectedItem?.ToString() == "PDF";
-        }
-
-        private void btnOk_Click(object sender, EventArgs e)
-        {
-            SkipZeroTotal = chkSkipZeroTotal.Checked;
-            PaperSize = cmbPaperSize.SelectedItem.ToString() ?? "A4";
-            ExportFormat = cmbExportFormat.SelectedItem.ToString() ?? "PDF";
         }
     }
 }

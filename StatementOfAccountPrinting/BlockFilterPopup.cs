@@ -1,14 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-
-namespace StatementOfAccountPrinting
+﻿namespace StatementOfAccountPrinting
 {
     public partial class BlockFilterPopup : Form
     {
@@ -34,7 +24,8 @@ namespace StatementOfAccountPrinting
             clbBlockFilter.ItemCheck += clbBlockFilter_ItemCheck;
         }
 
-        public void LoadBlocks(IEnumerable<string> blocks, IEnumerable<string>? checkedBlocks = null)
+        public void LoadBlocks(IEnumerable<(string Name, int Count)> blocks,
+                       IEnumerable<string>? checkedBlocks = null)
         {
             _loading = true;
             try
@@ -44,19 +35,10 @@ namespace StatementOfAccountPrinting
                     : new HashSet<string>(checkedBlocks, StringComparer.OrdinalIgnoreCase);
 
                 clbBlockFilter.Items.Clear();
-                foreach (var b in blocks)
+                foreach (var (name, count) in blocks)
                 {
-                    // Rules:
-                    //   checkedBlocks == null          → check all (default state)
-                    //   checkedBlocks has items        → check only those
-                    //   checkedBlocks is empty set     → check nothing
-                    bool isChecked;
-                    if (checkedSet == null)
-                        isChecked = true;
-                    else
-                        isChecked = checkedSet.Contains(b);
-
-                    clbBlockFilter.Items.Add(b, isChecked);
+                    bool isChecked = checkedSet == null || checkedSet.Contains(name);
+                    clbBlockFilter.Items.Add($"{name} ({count})", isChecked);
                 }
             }
             finally
@@ -69,13 +51,27 @@ namespace StatementOfAccountPrinting
         {
             var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in clbBlockFilter.CheckedItems)
-                if (item != null) result.Add(item.ToString()!);
+            {
+                var s = item?.ToString() ?? "";
+                if (string.IsNullOrEmpty(s)) continue;
+
+                // Remove the trailing " (N)" if present
+                int paren = s.LastIndexOf(" (");
+                if (paren > 0 && s.EndsWith(")"))
+                    s = s.Substring(0, paren);
+
+                result.Add(s);
+            }
             return result;
         }
 
-        public void ShowUnder(Control anchor)
+        public void ShowUnder(ToolStripItem anchor)
         {
-            var pt = anchor.PointToScreen(new System.Drawing.Point(0, anchor.Height));
+            if (anchor?.Owner == null) return;
+
+            var strip = anchor.Owner;   // the ToolStrip control
+            var pt = strip.PointToScreen(new System.Drawing.Point(anchor.Bounds.Left,
+                                                                     anchor.Bounds.Bottom));
             Location = pt;
             Show();
             BringToFront();
