@@ -1197,7 +1197,13 @@ public partial class MainForm : Form
                     });
                 });
             }
-        }).GeneratePdf(path);
+        })
+        .WithSettings(new DocumentSettings
+        {
+            ImageCompressionQuality = ImageCompressionQuality.Best,
+            ImageRasterDpi = 150
+        })
+        .GeneratePdf(path);
     }
     private static bool IsZeroTotal(string? value)
     {
