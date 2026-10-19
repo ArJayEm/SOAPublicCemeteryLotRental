@@ -117,11 +117,13 @@ public partial class MainForm : Form
     }
     private void LoadUIFromSettings()
     {
-        string version = $" {(Assembly.GetEntryAssembly().GetName().Version.ToString() ?? System.Reflection.Assembly
+        var assemblyEntry = Assembly.GetEntryAssembly().GetName().Version.ToString();
+        var reflectionAssesmblyEntry = System.Reflection.Assembly
                     .GetExecutingAssembly()
                     .GetName()
                     .Version?
-                    .ToString() ?? "")}";
+                    .ToString();
+        string version = $" {(assemblyEntry ?? reflectionAssesmblyEntry ?? "")}";
         string AppTitle = $"SoA Printing — Public Cemetery Lot Rental{version}";
         this.Text = AppTitle;
 
@@ -148,128 +150,129 @@ public partial class MainForm : Form
     {
         AutoUpdater.SetOwner(this);
         AutoUpdater.RunUpdateAsAdmin = false;
-        AutoUpdater.ShowSkipButton = false;
-        AutoUpdater.ShowRemindLaterButton = false;
 
-        bool updateAvailable = false;
         UpdateInfoEventArgs updateInfo = null;
 
-        await ProgressDialog.RunAsync(this, "Checking for Updates...", async prog =>
+        var tcs = new TaskCompletionSource<bool>();
+        AutoUpdaterDotNET.AutoUpdater.CheckForUpdateEventHandler handler = null;
+
+        handler = (args) =>
         {
-            prog.Report((10, "Connecting to update server..."));
+            updateInfo = args;
+            AutoUpdaterDotNET.AutoUpdater.CheckForUpdateEvent -= handler;
+            tcs.TrySetResult(true);
+        };
 
-            var tcs = new TaskCompletionSource<bool>();
+        AutoUpdaterDotNET.AutoUpdater.CheckForUpdateEvent += handler;
+        AutoUpdaterDotNET.AutoUpdater.Start("https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/updates.xml");
 
-            AutoUpdater.CheckForUpdateEventHandler handler = null;
+        var completed = await Task.WhenAny(tcs.Task, Task.Delay(10000));
+        if (completed != tcs.Task || updateInfo == null || updateInfo.Error != null)
+        {
+            MessageBox.Show("Could not connect to the update server.", "Update Error");
+            return;
+        }
 
-            handler = (args) =>
-            {
-                updateInfo = args;
-                updateAvailable = args.IsUpdateAvailable;
-                AutoUpdater.CheckForUpdateEvent -= handler;
-                tcs.TrySetResult(true);
-            };
+        if (!updateInfo.IsUpdateAvailable)
+        {
+            MessageBox.Show("You are already on the latest version.", "No Updates");
+            return;
+        }
 
-            AutoUpdater.CheckForUpdateEvent += handler;
+        // ── Ask user ──
+        var result = MessageBox.Show(
+            $"A new version ({updateInfo.CurrentVersion}) is available!\n\n" +
+            "Do you want to download and install it now?\n\n" +
+            "The app will briefly restart to apply the update.",
+            "Update Available",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Information);
 
-            AutoUpdater.Start("https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/updates.xml");
+        if (result != DialogResult.Yes) return;
 
-            prog.Report((40, "Checking version..."));
+        // ── Show progress bar while downloading ──
+        string tempInstaller = Path.Combine(Path.GetTempPath(), "soa-printing-cemetery.exe");
 
-            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(15000));
+        bool downloadSuccess = false;
 
-            if (completedTask != tcs.Task)
-            {
-                throw new TimeoutException("The update server took too long to respond.");
-            }
-
-            if (updateInfo.Error != null)
-            {
-                throw updateInfo.Error;
-            }
-
-            if (!updateAvailable)
-            {
-                prog.Report((100, "You are already on the latest version."));
-                await Task.Delay(1500);
-                return;
-            }
-
-            var result = MessageBox.Show(
-                $"A new version ({updateInfo.CurrentVersion}) is available!\n" +
-                $"You are currently on version {updateInfo.InstalledVersion}.\n\n" +
-                "Do you want to download and install it now?",
-                "Update Available",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Information);
-
-            if (result == DialogResult.No)
-            {
-                prog.Report((100, "Update cancelled."));
-                return;
-            }
-
-            prog.Report((50, "Downloading update..."));
-
-            string tempInstaller = Path.Combine(Path.GetTempPath(), "soa-printing-cemetery.exe");
-
-            using (var client = new System.Net.Http.HttpClient())
-            {
-                var response = await client.GetAsync(updateInfo.DownloadURL);
-                response.EnsureSuccessStatusCode();
-
-                using (var fs = new FileStream(tempInstaller, FileMode.Create, FileAccess.Write, FileShare.None))
-                {
-                    await response.Content.CopyToAsync(fs);
-                }
-            }
-
-            prog.Report((90, "Download complete."));
+        await ProgressDialog.RunAsync(this, "Downloading update...", async prog =>
+        {
+            prog.Report((10, "Connecting..."));
 
             try
             {
-                File.Delete(tempInstaller + ":Zone.Identifier");
-            }
-            catch { /* Ignore if the file didn't have the mark */ }
+                using var client = new System.Net.Http.HttpClient();
+                using var response = await client.GetAsync(updateInfo.DownloadURL, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
 
-            var restartResult = MessageBox.Show(
-                "The update has been downloaded successfully.\n\n" +
-                "Do you want to restart the application and install it now?",
-                "Update Ready",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
+                long? totalBytes = response.Content.Headers.ContentLength;
+                using var contentStream = await response.Content.ReadAsStreamAsync();
+                using var fileStream = new FileStream(tempInstaller, FileMode.Create, FileAccess.Write, FileShare.None);
 
-            if (restartResult == DialogResult.Yes)
-            {
-                prog.Report((100, "Restarting to install..."));
+                var buffer = new byte[8192];
+                long totalRead = 0;
+                int read;
 
-                _isUpdating = true;
-
-                //System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                //{
-                //    FileName = tempInstaller,
-                //    Arguments = "/SP- /silent /noicons /closeapplications",
-                //    UseShellExecute = true
-                //});
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                while ((read = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
                 {
-                    FileName = tempInstaller,
-                    // Add /LOG so we can see what happens in the temp folder
-                    Arguments = "/SP- /silent /noicons /closeapplications /LOG=\"C:\\temp\\install.log\"",
-                    UseShellExecute = true,
-                    Verb = "runas" // 👈 THIS IS THE KEY: Forces UAC prompt
-                });
+                    await fileStream.WriteAsync(buffer, 0, read);
+                    totalRead += read;
 
-                System.Environment.Exit(0);
+                    if (totalBytes.HasValue)
+                    {
+                        int pct = (int)((totalRead / (double)totalBytes.Value) * 100);
+                        prog.Report((pct, $"Downloading... {totalRead / 1024} KB / {totalBytes.Value / 1024} KB"));
+                    }
+                }
+
+                prog.Report((100, "Download complete."));
+                downloadSuccess = true;
             }
-            else
+            catch (Exception ex)
             {
-                MessageBox.Show(
-                    "The update will be installed the next time you run the application, or you can run the downloaded installer manually.",
-                    "Update Postponed", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Failed to download update:\n" + ex.Message, "Error");
             }
-
         }, keepOpenWhenDone: false);
+
+        if (!downloadSuccess) return;
+
+        // ── Confirm restart ──
+        var restart = MessageBox.Show(
+            "The update is ready.\n\n" +
+            "The app will close now to install the update, then reopen automatically.\n\n" +
+            "Continue?",
+            "Restart Required",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
+
+        if (restart != DialogResult.Yes) return;
+
+        // ── Silently run installer, close app, let Inno Setup reopen it ──
+        try
+        {
+            // Inno Setup flags:
+            //   /SILENT             = Show progress bar only, no wizard
+            //   /CLOSEAPPLICATIONS  = Auto-close apps holding the target files
+            //   /RESTARTAPPLICATIONS= Reopen the app after install
+            //   /NORESTART          = Do not reboot Windows if files are locked
+            string args = "/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART";
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = tempInstaller,
+                Arguments = args,
+                UseShellExecute = true,
+                Verb = "runas"   // UAC prompt for Program Files
+            });
+
+            // Force immediate exit so the installer can replace the .exe
+            _isUpdating = true;
+            Application.Exit();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Failed to run installer:\n" + ex.Message, "Error");
+        }
     }
     private void RegisterFonts()
     {
@@ -1626,7 +1629,41 @@ public partial class MainForm : Form
     #region SAVE LAST IMPORTED ACCOUNTS...
     private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
     {
-        CloseForm();
+        // 1. Ask the user (unless we are updating)
+        if (!_isUpdating)
+        {
+            var result = MessageBox.Show(
+                "Close the application?",
+                "Confirm",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            // If they click No, STOP right here and do not close.
+            if (result == DialogResult.Yes)
+            {
+                // 2. Save data
+                try
+                {
+                    SaveAccountsToDisk();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("Save failed: " + ex.Message);
+                }
+
+                // 3. Close the app
+                if (_isUpdating)
+                {
+                    // Force kill immediately so the installer can unlock the .exe
+                    Environment.Exit(0);
+                }
+                else
+                {
+                    // Normal graceful close
+                    this.Close();
+                }
+            }
+        }
     }
     private void SaveAccountsToDisk()
     {
@@ -1723,45 +1760,8 @@ public partial class MainForm : Form
     #endregion
     private void exitToolStripMenuItem_Click(object sender, EventArgs e)
     {
-        CloseForm();
+        this.Close();
     }
-    private void CloseForm()
-    {
-        // Skip confirmation if we are restarting for an update
-        if (!_isUpdating)
-        {
-            var result = MessageBox.Show(
-                "Close the application?",
-                "Confirm",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-
-            if (result != DialogResult.Yes)
-                return; // User said no, abort the close
-        }
-
-        // Always save before actually closing
-        try
-        {
-            SaveAccountsToDisk();
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine("Save failed: " + ex.Message);
-        }
-
-        // Now actually close
-        // Use Environment.Exit(0) if you want to guarantee the process dies immediately
-        // after the update installer starts, otherwise just Close().
-        //Close();
-        Environment.Exit(0);
-    }
-
-    private void toolStripMenuItem1_Click(object sender, EventArgs e)
-    {
-
-    }
-
     private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
     {
         using var dlg = new About();
