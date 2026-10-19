@@ -1,4 +1,6 @@
-﻿namespace StatementOfAccountPrinting
+﻿using System.Reflection;
+
+namespace StatementOfAccountPrinting
 {
     public partial class About : Form
     {
@@ -6,7 +8,7 @@
         {
             InitializeComponent();
 
-            var version = System.Reflection.Assembly
+            var version = Assembly.GetEntryAssembly().GetName().Version.ToString() ?? System.Reflection.Assembly
                 .GetExecutingAssembly()
                 .GetName()
                 .Version?

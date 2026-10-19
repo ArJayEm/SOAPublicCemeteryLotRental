@@ -49,9 +49,9 @@
             chkSkipZeroTotal.AutoSize = true;
             chkSkipZeroTotal.Location = new Point(9, 22);
             chkSkipZeroTotal.Name = "chkSkipZeroTotal";
-            chkSkipZeroTotal.Size = new Size(228, 19);
+            chkSkipZeroTotal.Size = new Size(241, 19);
             chkSkipZeroTotal.TabIndex = 0;
-            chkSkipZeroTotal.Text = "Skip records with ₱0.00 total on export";
+            chkSkipZeroTotal.Text = "Always skip ₱0.00 total records on export";
             chkSkipZeroTotal.UseVisualStyleBackColor = true;
             // 
             // cmbPaperSize
@@ -98,7 +98,7 @@
             btnSave.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnSave.DialogResult = DialogResult.OK;
             btnSave.FlatStyle = FlatStyle.System;
-            btnSave.Location = new Point(176, 221);
+            btnSave.Location = new Point(192, 221);
             btnSave.Name = "btnSave";
             btnSave.Size = new Size(75, 23);
             btnSave.TabIndex = 12;
@@ -120,33 +120,36 @@
             // 
             // groupBox1
             // 
+            groupBox1.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             groupBox1.Controls.Add(lblExportFormat);
             groupBox1.Controls.Add(cmbPaperSize);
             groupBox1.Controls.Add(label1);
             groupBox1.Controls.Add(cmbExportFormat);
             groupBox1.Location = new Point(12, 66);
             groupBox1.Name = "groupBox1";
-            groupBox1.Size = new Size(243, 85);
+            groupBox1.Size = new Size(255, 85);
             groupBox1.TabIndex = 14;
             groupBox1.TabStop = false;
             groupBox1.Text = "File Format";
             // 
             // groupBox2
             // 
+            groupBox2.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             groupBox2.Controls.Add(chkSkipZeroTotal);
             groupBox2.Location = new Point(12, 12);
             groupBox2.Name = "groupBox2";
-            groupBox2.Size = new Size(243, 48);
+            groupBox2.Size = new Size(255, 48);
             groupBox2.TabIndex = 15;
             groupBox2.TabStop = false;
             groupBox2.Text = "General";
             // 
             // groupBox3
             // 
+            groupBox3.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             groupBox3.Controls.Add(linkLabelClearCache);
             groupBox3.Location = new Point(13, 157);
             groupBox3.Name = "groupBox3";
-            groupBox3.Size = new Size(236, 45);
+            groupBox3.Size = new Size(254, 45);
             groupBox3.TabIndex = 16;
             groupBox3.TabStop = false;
             groupBox3.Text = "Storage";
@@ -168,7 +171,7 @@
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             CancelButton = btnCancel;
-            ClientSize = new Size(267, 256);
+            ClientSize = new Size(279, 256);
             ControlBox = false;
             Controls.Add(groupBox3);
             Controls.Add(groupBox2);

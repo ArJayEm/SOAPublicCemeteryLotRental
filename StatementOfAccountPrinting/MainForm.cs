@@ -1,47 +1,131 @@
+using AutoUpdaterDotNET;
 using ClosedXML.Excel;
 using QuestPDF.Drawing;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 using System.ComponentModel;
+using System.Configuration;
+using System.Reflection;
 
 namespace StatementOfAccountPrinting;
 
 public partial class MainForm : Form
 {
     private readonly BindingList<CemeteryLotAccount> _accounts = new();
-    private const string AppTitle = "Statement of Account Printing — Public Cemetery Lot Rental";
-    private const string TemplateFileName = "WordTemplate.docx";
-    private const string StatementPrefix = "SOA_";
-    private readonly List<Stream> _fontStreams = new();
-    private BlockFilterPopup? _blockPopup;
     private readonly HashSet<string> _selectedBlocks = new(StringComparer.OrdinalIgnoreCase);
     private bool _blockFilterInitialized;
+    private bool _isUpdating = false;
+    private BlockFilterPopup? _blockPopup;
+    private readonly bool IsDevelopment =
+#if DEBUG
+        true;
+#else
+        false;
+#endif
 
     public MainForm()
     {
         InitializeComponent();
-
-        var wa = Screen.FromControl(this).WorkingArea;
-
-        int newWidth = Math.Min(Width, wa.Width);
-        int newHeight = Math.Min(Height, wa.Height);
-
-        int newLeft = Math.Max(wa.Left, Math.Min(Left, wa.Right - newWidth));
-        int newTop = Math.Max(wa.Top, Math.Min(Top, wa.Bottom - newHeight));
-
-        Bounds = new Rectangle(newLeft, newTop, newWidth, newHeight);
-
-        Text = AppTitle;
-        //dgvData.DataSource = _accounts;
-        //RebuildBlockTabsAsync();
+        LoadUIFromSettings();
         QuestPDF.Settings.License = LicenseType.Community;
-        RegisterFonts();
+    }
+    private async void MainForm_Shown(object sender, EventArgs e)
+    {
+        await LoadAccountsFromDiskAsync();
+    }
+    private void CacheClearedUI()
+    {
+        tabBlocks.Visible = false;
+        toolStripButtonImportExcel.Visible = false;
 
-        //ToolTip toolTip = new ToolTip();
-        //toolTip.SetToolTip(toolStripMenuItemBlockFilter, "Select Blocks to Print");
-        //toolTip.SetToolTip(toolStripSplitButtonExport, "Export as PDF");
-        //toolTip.SetToolTip(toolStripMenuItemExportSelected, "Print selected row(s) from the active tab");
+        var emptyStatePanel = new Panel
+        {
+            Name = "panelEmptyState",
+            Width = 300,
+            Height = 120,
+            BackColor = System.Drawing.Color.Transparent
+        };
+
+        var messageLabel = new Label
+        {
+            Text = "No records found.\nImport an Excel file to get started.",
+            Font = new Font("Segoe UI", 11F, FontStyle.Regular),
+            ForeColor = System.Drawing.Color.Gray,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Dock = DockStyle.Top,
+            Height = 50
+        };
+
+        var importBtn = new Button
+        {
+            Text = "Import Excel",
+            Width = 160,
+            Height = 45,
+            Font = new Font("Segoe UI", 11F, FontStyle.Regular),
+            BackColor = System.Drawing.Color.White,
+            FlatStyle = FlatStyle.System,
+            Name = "btnEmptyStateImport",
+            Image = Properties.Resources.sheets,
+            TextImageRelation = TextImageRelation.ImageBeforeText
+        };
+
+        importBtn.Click += (s, e) => toolStripButtonImportExcel_Click(sender: null, e: EventArgs.Empty);
+
+        emptyStatePanel.Controls.Add(importBtn);
+        emptyStatePanel.Controls.Add(messageLabel);
+        importBtn.Location = new Point(
+            (emptyStatePanel.Width - importBtn.Width) / 2,
+            messageLabel.Bottom + 10
+        );
+        void CenterPanel()
+        {
+            if (emptyStatePanel.IsDisposed) return;
+
+            int centerX = tabBlocks.Left + (tabBlocks.Width - emptyStatePanel.Width) / 2;
+            int centerY = tabBlocks.Top + (tabBlocks.Height - emptyStatePanel.Height) / 2;
+            emptyStatePanel.Location = new Point(centerX, centerY);
+        }
+
+        CenterPanel();
+
+        this.Resize += (s, e) => CenterPanel();
+        tabBlocks.Resize += (s, e) => CenterPanel();
+
+        this.Controls.Add(emptyStatePanel);
+        emptyStatePanel.BringToFront();
+    }
+    private void RestoreTabsUI()
+    {
+        // 1) Remove the empty-state button if it exists
+        var existingBtn = this.Controls.Find("btnEmptyStateImport", true).FirstOrDefault();
+        if (existingBtn != null)
+        {
+            this.Controls.Remove(existingBtn);
+            existingBtn.Dispose();
+        }
+        var emptyStatePanel = this.Controls.Find("panelEmptyState", true).FirstOrDefault();
+        if (emptyStatePanel != null)
+        {
+            this.Controls.Remove(emptyStatePanel);
+            emptyStatePanel.Dispose();
+        }
+
+        // 2) Show the tabs and toolbar button again
+        tabBlocks.Visible = true;
+        toolStripButtonImportExcel.Visible = true;
+    }
+    private void LoadUIFromSettings()
+    {
+        string version = $" {(Assembly.GetEntryAssembly().GetName().Version.ToString() ?? System.Reflection.Assembly
+                    .GetExecutingAssembly()
+                    .GetName()
+                    .Version?
+                    .ToString() ?? "")}";
+        string AppTitle = $"SoA Printing — Public Cemetery Lot Rental{version}";
+        this.Text = AppTitle;
+
+        RegisterFonts();
 
         var isWordExportEnabled = Properties.Settings.Default.EnableWordExport;
         var savedFormat = !isWordExportEnabled ? "PDF" : Properties.Settings.Default.ExportFormat;
@@ -54,13 +138,143 @@ public partial class MainForm : Form
         importTemplateToolStripMenuItem.Visible = isWordExportEnabled;
         exportTemplateToolStripMenuItem.Visible = isWordExportEnabled;
         toolStripSeparator1.Visible = isWordExportEnabled;
+
+        string devSetting = ConfigurationManager.AppSettings["IsDevelopment"];
+        //var IsDevelopment = bool.TryParse(devSetting, out bool result) && result;
+
+        //checkForUpdatesToolStripMenuItem.Visible = IsDevelopment;
     }
-    private async void MainForm_Shown(object sender, EventArgs e)
+    private async Task CheckForUpdatesBlocking()
     {
-        await LoadAccountsFromDiskAsync();
+        AutoUpdater.SetOwner(this);
+        AutoUpdater.RunUpdateAsAdmin = false;
+        AutoUpdater.ShowSkipButton = false;
+        AutoUpdater.ShowRemindLaterButton = false;
+
+        bool updateAvailable = false;
+        UpdateInfoEventArgs updateInfo = null;
+
+        await ProgressDialog.RunAsync(this, "Checking for Updates...", async prog =>
+        {
+            prog.Report((10, "Connecting to update server..."));
+
+            var tcs = new TaskCompletionSource<bool>();
+
+            AutoUpdater.CheckForUpdateEventHandler handler = null;
+
+            handler = (args) =>
+            {
+                updateInfo = args;
+                updateAvailable = args.IsUpdateAvailable;
+                AutoUpdater.CheckForUpdateEvent -= handler;
+                tcs.TrySetResult(true);
+            };
+
+            AutoUpdater.CheckForUpdateEvent += handler;
+
+            AutoUpdater.Start("https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/updates.xml");
+
+            prog.Report((40, "Checking version..."));
+
+            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(15000));
+
+            if (completedTask != tcs.Task)
+            {
+                throw new TimeoutException("The update server took too long to respond.");
+            }
+
+            if (updateInfo.Error != null)
+            {
+                throw updateInfo.Error;
+            }
+
+            if (!updateAvailable)
+            {
+                prog.Report((100, "You are already on the latest version."));
+                await Task.Delay(1500);
+                return;
+            }
+
+            var result = MessageBox.Show(
+                $"A new version ({updateInfo.CurrentVersion}) is available!\n" +
+                $"You are currently on version {updateInfo.InstalledVersion}.\n\n" +
+                "Do you want to download and install it now?",
+                "Update Available",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Information);
+
+            if (result == DialogResult.No)
+            {
+                prog.Report((100, "Update cancelled."));
+                return;
+            }
+
+            prog.Report((50, "Downloading update..."));
+
+            string tempInstaller = Path.Combine(Path.GetTempPath(), "soa-printing-cemetery.exe");
+
+            using (var client = new System.Net.Http.HttpClient())
+            {
+                var response = await client.GetAsync(updateInfo.DownloadURL);
+                response.EnsureSuccessStatusCode();
+
+                using (var fs = new FileStream(tempInstaller, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await response.Content.CopyToAsync(fs);
+                }
+            }
+
+            prog.Report((90, "Download complete."));
+
+            try
+            {
+                File.Delete(tempInstaller + ":Zone.Identifier");
+            }
+            catch { /* Ignore if the file didn't have the mark */ }
+
+            var restartResult = MessageBox.Show(
+                "The update has been downloaded successfully.\n\n" +
+                "Do you want to restart the application and install it now?",
+                "Update Ready",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (restartResult == DialogResult.Yes)
+            {
+                prog.Report((100, "Restarting to install..."));
+
+                _isUpdating = true;
+
+                //System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                //{
+                //    FileName = tempInstaller,
+                //    Arguments = "/SP- /silent /noicons /closeapplications",
+                //    UseShellExecute = true
+                //});
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = tempInstaller,
+                    // Add /LOG so we can see what happens in the temp folder
+                    Arguments = "/SP- /silent /noicons /closeapplications /LOG=\"C:\\temp\\install.log\"",
+                    UseShellExecute = true,
+                    Verb = "runas" // 👈 THIS IS THE KEY: Forces UAC prompt
+                });
+
+                System.Environment.Exit(0);
+            }
+            else
+            {
+                MessageBox.Show(
+                    "The update will be installed the next time you run the application, or you can run the downloaded installer manually.",
+                    "Update Postponed", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+
+        }, keepOpenWhenDone: false);
     }
     private void RegisterFonts()
     {
+        List<Stream> _fontStreams = new();
+
         foreach (var path in new[]
         {
             "Resources/Fonts/calibri.ttf",
@@ -225,6 +439,8 @@ public partial class MainForm : Form
                 progress.Report((100, "Done."));
             });
         }, keepOpenWhenDone: false);
+
+        RestoreTabsUI();
     }
     private void TabBlocks_SelectedIndexChanged(object? sender, EventArgs e)
     {
@@ -836,7 +1052,7 @@ public partial class MainForm : Form
         if (skipZero)
             source = source.Where(a => !IsZeroTotal(a.TotalAmountDue)).ToList();
         // 2.5) Only-zero filter
-        if (skipZero)
+        else if (onlyZero)
             source = source.Where(a => IsZeroTotal(a.TotalAmountDue)).ToList();
 
         if (source.Count == 0)
@@ -1367,22 +1583,19 @@ public partial class MainForm : Form
         _blockPopup.LoadBlocks(blocksWithCounts, preChecked);
         _blockPopup.ShowUnder(toolStripMenuItemBlockFilter);
     }
+    private void OnBlockFilterVisibilityChanged(object? sender, EventArgs e)
+    {
+        if (_blockPopup != null && !_blockPopup.Visible)
+            RebuildBlockTabsAsync();
+    }
     private void OnBlockSelectionChanged(HashSet<string> selected)
     {
         _selectedBlocks.Clear();
         foreach (var b in selected)
             _selectedBlocks.Add(b);
 
-        _blockFilterInitialized = true;   // user has interacted with the popup
+        _blockFilterInitialized = true;
         UpdateBlockFilterCaption();
-    }
-    private void OnBlockFilterVisibilityChanged(object? sender, EventArgs e)
-    {
-        // Only rebuild when the popup is becoming invisible
-        if (_blockPopup != null && !_blockPopup.Visible)
-        {
-            //RebuildBlockTabsAsync();
-        }
     }
     private void UpdateBlockFilterCaption()
     {
@@ -1413,14 +1626,7 @@ public partial class MainForm : Form
     #region SAVE LAST IMPORTED ACCOUNTS...
     private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
     {
-        try
-        {
-            SaveAccountsToDisk();
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine("Save failed: " + ex.Message);
-        }
+        CloseForm();
     }
     private void SaveAccountsToDisk()
     {
@@ -1442,6 +1648,7 @@ public partial class MainForm : Form
 
         RebuildBlockTabsAsync();
         UpdateBlockFilterCaption();
+        CacheClearedUI();
 
         toolStripMenuItemBlockFilter.Enabled = false;
         toolStripSplitButtonExport.Enabled = false;
@@ -1485,7 +1692,11 @@ public partial class MainForm : Form
             keepOpenWhenDone: false);   // auto-close — user doesn't need to dismiss it
 
         // ── Back on the UI thread ──
-        if (loaded == null || loaded.Count == 0) return;
+        if (loaded == null || loaded.Count == 0)
+        {
+            CacheClearedUI();
+            return;
+        }
 
         _accounts.Clear();
         foreach (var a in loaded)
@@ -1516,14 +1727,34 @@ public partial class MainForm : Form
     }
     private void CloseForm()
     {
-        var result = MessageBox.Show(
-            "Close the application?",
-            "Confirm",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question);
+        // Skip confirmation if we are restarting for an update
+        if (!_isUpdating)
+        {
+            var result = MessageBox.Show(
+                "Close the application?",
+                "Confirm",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
 
-        if (result == DialogResult.Yes)
-            Close();
+            if (result != DialogResult.Yes)
+                return; // User said no, abort the close
+        }
+
+        // Always save before actually closing
+        try
+        {
+            SaveAccountsToDisk();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("Save failed: " + ex.Message);
+        }
+
+        // Now actually close
+        // Use Environment.Exit(0) if you want to guarantee the process dies immediately
+        // after the update installer starts, otherwise just Close().
+        //Close();
+        Environment.Exit(0);
     }
 
     private void toolStripMenuItem1_Click(object sender, EventArgs e)
@@ -1554,5 +1785,10 @@ public partial class MainForm : Form
     private void exportAllonly000TotalAmountDueToolStripMenuItem_Click(object sender, EventArgs e)
     {
         ExportAllAsPdfAsync(onlyZero: true);
+    }
+
+    private async void checkForUpdatesToolStripMenuItem_Click(object sender, EventArgs e)
+    {
+        await CheckForUpdatesBlocking();
     }
 }

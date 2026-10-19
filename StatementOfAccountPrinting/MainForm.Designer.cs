@@ -20,15 +20,13 @@ partial class MainForm
         fileToolStripMenuItem = new ToolStripMenuItem();
         importTemplateToolStripMenuItem = new ToolStripMenuItem();
         exportTemplateToolStripMenuItem = new ToolStripMenuItem();
-        toolStripSeparator1 = new ToolStripSeparator();
-        setToolStripMenuItem = new ToolStripMenuItem();
         toolStripSeparator2 = new ToolStripSeparator();
-        aboutToolStripMenuItem = new ToolStripMenuItem();
-        toolStripSeparator3 = new ToolStripSeparator();
         exitToolStripMenuItem = new ToolStripMenuItem();
-        tabBlocks = new TabControl();
-        tabPage1 = new TabPage();
-        tabPage2 = new TabPage();
+        settingsToolStripMenuItem = new ToolStripMenuItem();
+        helpToolStripMenuItem = new ToolStripMenuItem();
+        checkForUpdatesToolStripMenuItem = new ToolStripMenuItem();
+        toolStripSeparator1 = new ToolStripSeparator();
+        aboutToolStripMenuItem = new ToolStripMenuItem();
         toolStrip1 = new ToolStrip();
         toolStripSplitButtonExport = new ToolStripSplitButton();
         toolStripMenuItemExportSelected = new ToolStripMenuItem();
@@ -36,9 +34,12 @@ partial class MainForm
         exportAllonly000TotalAmountDueToolStripMenuItem = new ToolStripMenuItem();
         toolStripButtonImportExcel = new ToolStripButton();
         toolStripMenuItemBlockFilter = new ToolStripButton();
+        tabPage2 = new TabPage();
+        tabPage1 = new TabPage();
+        tabBlocks = new TabControl();
         menuStrip1.SuspendLayout();
-        tabBlocks.SuspendLayout();
         toolStrip1.SuspendLayout();
+        tabBlocks.SuspendLayout();
         SuspendLayout();
         // 
         // lblStatus
@@ -53,7 +54,7 @@ partial class MainForm
         // menuStrip1
         // 
         menuStrip1.Font = new Font("Segoe UI", 12F);
-        menuStrip1.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem });
+        menuStrip1.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem, settingsToolStripMenuItem, helpToolStripMenuItem });
         menuStrip1.Location = new Point(0, 0);
         menuStrip1.Name = "menuStrip1";
         menuStrip1.Size = new Size(765, 29);
@@ -62,92 +63,77 @@ partial class MainForm
         // 
         // fileToolStripMenuItem
         // 
-        fileToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { importTemplateToolStripMenuItem, exportTemplateToolStripMenuItem, toolStripSeparator1, setToolStripMenuItem, toolStripSeparator2, aboutToolStripMenuItem, toolStripSeparator3, exitToolStripMenuItem });
+        fileToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { importTemplateToolStripMenuItem, exportTemplateToolStripMenuItem, toolStripSeparator2, exitToolStripMenuItem });
         fileToolStripMenuItem.Name = "fileToolStripMenuItem";
+        fileToolStripMenuItem.ShortcutKeys = Keys.Alt | Keys.F;
         fileToolStripMenuItem.Size = new Size(46, 25);
         fileToolStripMenuItem.Text = "File";
         // 
         // importTemplateToolStripMenuItem
         // 
         importTemplateToolStripMenuItem.Name = "importTemplateToolStripMenuItem";
-        importTemplateToolStripMenuItem.Size = new Size(242, 26);
+        importTemplateToolStripMenuItem.ShortcutKeys = Keys.Alt | Keys.I;
+        importTemplateToolStripMenuItem.Size = new Size(286, 26);
         importTemplateToolStripMenuItem.Text = "Import Template (.docx)";
         importTemplateToolStripMenuItem.Click += importTemplateToolStripMenuItem_Click;
         // 
         // exportTemplateToolStripMenuItem
         // 
         exportTemplateToolStripMenuItem.Name = "exportTemplateToolStripMenuItem";
-        exportTemplateToolStripMenuItem.Size = new Size(242, 26);
+        exportTemplateToolStripMenuItem.ShortcutKeys = Keys.Alt | Keys.E;
+        exportTemplateToolStripMenuItem.Size = new Size(286, 26);
         exportTemplateToolStripMenuItem.Text = "Export Template";
         exportTemplateToolStripMenuItem.Click += exportTemplateToolStripMenuItem_Click_1;
-        // 
-        // toolStripSeparator1
-        // 
-        toolStripSeparator1.Name = "toolStripSeparator1";
-        toolStripSeparator1.Size = new Size(239, 6);
-        // 
-        // setToolStripMenuItem
-        // 
-        setToolStripMenuItem.Name = "setToolStripMenuItem";
-        setToolStripMenuItem.Size = new Size(242, 26);
-        setToolStripMenuItem.Text = "Settings";
-        setToolStripMenuItem.Click += settingsToolStripMenuItem_Click;
         // 
         // toolStripSeparator2
         // 
         toolStripSeparator2.Name = "toolStripSeparator2";
-        toolStripSeparator2.Size = new Size(239, 6);
-        // 
-        // aboutToolStripMenuItem
-        // 
-        aboutToolStripMenuItem.Name = "aboutToolStripMenuItem";
-        aboutToolStripMenuItem.Size = new Size(242, 26);
-        aboutToolStripMenuItem.Text = "About";
-        aboutToolStripMenuItem.Click += aboutToolStripMenuItem_Click;
-        // 
-        // toolStripSeparator3
-        // 
-        toolStripSeparator3.Name = "toolStripSeparator3";
-        toolStripSeparator3.Size = new Size(239, 6);
+        toolStripSeparator2.Size = new Size(283, 6);
         // 
         // exitToolStripMenuItem
         // 
         exitToolStripMenuItem.Name = "exitToolStripMenuItem";
-        exitToolStripMenuItem.Size = new Size(242, 26);
+        exitToolStripMenuItem.ShortcutKeys = Keys.Alt | Keys.F4;
+        exitToolStripMenuItem.Size = new Size(286, 26);
         exitToolStripMenuItem.Text = "Exit";
         exitToolStripMenuItem.Click += exitToolStripMenuItem_Click;
         // 
-        // tabBlocks
+        // settingsToolStripMenuItem
         // 
-        tabBlocks.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-        tabBlocks.Controls.Add(tabPage1);
-        tabBlocks.Controls.Add(tabPage2);
-        tabBlocks.Font = new Font("Segoe UI", 10F);
-        tabBlocks.Location = new Point(12, 60);
-        tabBlocks.Name = "tabBlocks";
-        tabBlocks.SelectedIndex = 0;
-        tabBlocks.Size = new Size(742, 284);
-        tabBlocks.TabIndex = 9;
+        settingsToolStripMenuItem.Name = "settingsToolStripMenuItem";
+        settingsToolStripMenuItem.ShortcutKeys = Keys.Alt | Keys.S;
+        settingsToolStripMenuItem.Size = new Size(78, 25);
+        settingsToolStripMenuItem.Text = "Settings";
+        settingsToolStripMenuItem.Click += settingsToolStripMenuItem_Click;
         // 
-        // tabPage1
+        // helpToolStripMenuItem
         // 
-        tabPage1.Location = new Point(4, 26);
-        tabPage1.Name = "tabPage1";
-        tabPage1.Padding = new Padding(3);
-        tabPage1.Size = new Size(734, 254);
-        tabPage1.TabIndex = 0;
-        tabPage1.Text = "tabPage1";
-        tabPage1.UseVisualStyleBackColor = true;
+        helpToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { checkForUpdatesToolStripMenuItem, toolStripSeparator1, aboutToolStripMenuItem });
+        helpToolStripMenuItem.Name = "helpToolStripMenuItem";
+        helpToolStripMenuItem.ShortcutKeys = Keys.Alt | Keys.H;
+        helpToolStripMenuItem.Size = new Size(54, 25);
+        helpToolStripMenuItem.Text = "Help";
         // 
-        // tabPage2
+        // checkForUpdatesToolStripMenuItem
         // 
-        tabPage2.Location = new Point(4, 26);
-        tabPage2.Name = "tabPage2";
-        tabPage2.Padding = new Padding(3);
-        tabPage2.Size = new Size(734, 254);
-        tabPage2.TabIndex = 1;
-        tabPage2.Text = "tabPage2";
-        tabPage2.UseVisualStyleBackColor = true;
+        checkForUpdatesToolStripMenuItem.Name = "checkForUpdatesToolStripMenuItem";
+        checkForUpdatesToolStripMenuItem.ShortcutKeys = Keys.Alt | Keys.U;
+        checkForUpdatesToolStripMenuItem.Size = new Size(261, 26);
+        checkForUpdatesToolStripMenuItem.Text = "Check For Updates";
+        checkForUpdatesToolStripMenuItem.Click += checkForUpdatesToolStripMenuItem_Click;
+        // 
+        // toolStripSeparator1
+        // 
+        toolStripSeparator1.Name = "toolStripSeparator1";
+        toolStripSeparator1.Size = new Size(258, 6);
+        // 
+        // aboutToolStripMenuItem
+        // 
+        aboutToolStripMenuItem.Name = "aboutToolStripMenuItem";
+        aboutToolStripMenuItem.ShortcutKeys = Keys.Alt | Keys.A;
+        aboutToolStripMenuItem.Size = new Size(261, 26);
+        aboutToolStripMenuItem.Text = "About";
+        aboutToolStripMenuItem.Click += aboutToolStripMenuItem_Click;
         // 
         // toolStrip1
         // 
@@ -217,6 +203,38 @@ partial class MainForm
         toolStripMenuItemBlockFilter.Text = "All Blocks (*)";
         toolStripMenuItemBlockFilter.Click += toolStripMenuItemBlockFilter_Click;
         // 
+        // tabPage2
+        // 
+        tabPage2.Location = new Point(4, 26);
+        tabPage2.Name = "tabPage2";
+        tabPage2.Padding = new Padding(3);
+        tabPage2.Size = new Size(734, 254);
+        tabPage2.TabIndex = 1;
+        tabPage2.Text = "tabPage2";
+        tabPage2.UseVisualStyleBackColor = true;
+        // 
+        // tabPage1
+        // 
+        tabPage1.Location = new Point(4, 26);
+        tabPage1.Name = "tabPage1";
+        tabPage1.Padding = new Padding(3);
+        tabPage1.Size = new Size(734, 254);
+        tabPage1.TabIndex = 0;
+        tabPage1.Text = "tabPage1";
+        tabPage1.UseVisualStyleBackColor = true;
+        // 
+        // tabBlocks
+        // 
+        tabBlocks.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        tabBlocks.Controls.Add(tabPage1);
+        tabBlocks.Controls.Add(tabPage2);
+        tabBlocks.Font = new Font("Segoe UI", 10F);
+        tabBlocks.Location = new Point(12, 60);
+        tabBlocks.Name = "tabBlocks";
+        tabBlocks.SelectedIndex = 0;
+        tabBlocks.Size = new Size(742, 284);
+        tabBlocks.TabIndex = 9;
+        // 
         // MainForm
         // 
         AutoScaleDimensions = new SizeF(7F, 15F);
@@ -228,19 +246,18 @@ partial class MainForm
         Controls.Add(menuStrip1);
         MainMenuStrip = menuStrip1;
         Margin = new Padding(3, 2, 3, 2);
-        MaximizeBox = false;
         MinimumSize = new Size(781, 400);
         Name = "MainForm";
         StartPosition = FormStartPosition.CenterScreen;
-        Text = "Statement of Account Printing — Public Cemetery Lot Rental";
+        Text = "SoA Printing — Public Cemetery Lot Rental";
         WindowState = FormWindowState.Maximized;
         FormClosing += MainForm_FormClosing;
         Shown += MainForm_Shown;
         menuStrip1.ResumeLayout(false);
         menuStrip1.PerformLayout();
-        tabBlocks.ResumeLayout(false);
         toolStrip1.ResumeLayout(false);
         toolStrip1.PerformLayout();
+        tabBlocks.ResumeLayout(false);
         ResumeLayout(false);
         PerformLayout();
     }
@@ -251,11 +268,6 @@ partial class MainForm
     private ToolStripMenuItem fileToolStripMenuItem;
     private ToolStripMenuItem importTemplateToolStripMenuItem;
     private ToolStripMenuItem exportTemplateToolStripMenuItem;
-    private TabControl tabBlocks;
-    private TabPage tabPage1;
-    private TabPage tabPage2;
-    private ToolStripSeparator toolStripSeparator1;
-    private ToolStripMenuItem setToolStripMenuItem;
     private ToolStripSeparator toolStripSeparator2;
     private ToolStripMenuItem exitToolStripMenuItem;
     private ToolStrip toolStrip1;
@@ -263,8 +275,14 @@ partial class MainForm
     private ToolStripMenuItem toolStripMenuItemExportSelected;
     private ToolStripButton toolStripButtonImportExcel;
     private ToolStripButton toolStripMenuItemBlockFilter;
-    private ToolStripMenuItem aboutToolStripMenuItem;
-    private ToolStripSeparator toolStripSeparator3;
     private ToolStripMenuItem exportAllskip000TotalAmountDueToolStripMenuItem;
     private ToolStripMenuItem exportAllonly000TotalAmountDueToolStripMenuItem;
+    private TabPage tabPage2;
+    private TabPage tabPage1;
+    private TabControl tabBlocks;
+    private ToolStripMenuItem settingsToolStripMenuItem;
+    private ToolStripMenuItem helpToolStripMenuItem;
+    private ToolStripMenuItem checkForUpdatesToolStripMenuItem;
+    private ToolStripSeparator toolStripSeparator1;
+    private ToolStripMenuItem aboutToolStripMenuItem;
 }

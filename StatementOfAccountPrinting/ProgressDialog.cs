@@ -13,7 +13,7 @@
         MinimizeBox = false;
         MaximizeBox = false;
         ControlBox = false;
-        ClientSize = new System.Drawing.Size(460, 200);
+        ClientSize = new System.Drawing.Size(460, 240);
 
         _label = new Label
         {
@@ -29,7 +29,7 @@
         _bar = new ProgressBar
         {
             Left = 12,
-            Top = 128,
+            Top = 135,
             Width = 436,
             Height = 20,
             Minimum = 0,
@@ -41,7 +41,7 @@
         {
             Text = "0%",
             Left = 12,
-            Top = 152,
+            Top = 170,
             Width = 260,
             Height = 24,
             TextAlign = System.Drawing.ContentAlignment.MiddleLeft
@@ -51,7 +51,7 @@
         {
             Text = "Close",
             Left = 350,
-            Top = 152,
+            Top = 170,
             Width = 98,
             Height = 26,
             Visible = false
