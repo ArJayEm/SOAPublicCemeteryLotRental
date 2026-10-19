@@ -3,5 +3,5 @@
     <version>1.0.0.2</version>
     <url>https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/soa-printing-cemetery.exe</url>
     <changelog>https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/changelog.txt</changelog>
-    <mandatory>false</mandatory>
+    <mandatory>true</mandatory>
 </item>
