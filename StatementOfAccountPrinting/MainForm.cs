@@ -229,6 +229,18 @@ public partial class MainForm : Form
         AutoUpdater.SetOwner(this);
         AutoUpdater.RunUpdateAsAdmin = false;
 
+        // ── 1. Force AutoUpdater to read the FileVersion ──
+        try
+        {
+            string currentVersionStr = GetAppVersion();
+            if (Version.TryParse(currentVersionStr, out var parsedVersion))
+            {
+                // This tells AutoUpdater.NET: "My installed version is 1.0.2.64463"
+                AutoUpdater.InstalledVersion = parsedVersion;
+            }
+        }
+        catch { }
+
         UpdateInfoEventArgs updateInfo = null;
 
         var tcs = new TaskCompletionSource<bool>();
@@ -251,6 +263,17 @@ public partial class MainForm : Form
             return;
         }
 
+        // ── 2. Double check the version to prevent mandatory=true loops ──
+        string currentVersion = GetAppVersion();
+        string serverVersion = updateInfo.CurrentVersion;
+
+        // If the versions match exactly, ignore the prompt even if mandatory=true
+        if (string.Equals(currentVersion, serverVersion, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("You are already on the latest version.", "No Updates");
+            return;
+        }
+
         if (!updateInfo.IsUpdateAvailable)
         {
             MessageBox.Show("You are already on the latest version.", "No Updates");
@@ -259,7 +282,8 @@ public partial class MainForm : Form
 
         // ── Ask user ──
         var result = MessageBox.Show(
-            $"A new version ({updateInfo.CurrentVersion}) is available!\n\n" +
+            $"A new version ({serverVersion}) is available!\n" +
+            $"You are currently on version {currentVersion}.\n\n" +
             "Do you want to download and install it now?\n\n" +
             "The app will briefly restart to apply the update.",
             "Update Available",
@@ -270,7 +294,6 @@ public partial class MainForm : Form
 
         // ── Show progress bar while downloading ──
         string tempInstaller = Path.Combine(Path.GetTempPath(), "soa-printing-cemetery.exe");
-
         bool downloadSuccess = false;
 
         await ProgressDialog.RunAsync(this, "Downloading update...", async prog =>
@@ -280,7 +303,11 @@ public partial class MainForm : Form
             try
             {
                 using var client = new System.Net.Http.HttpClient();
-                using var response = await client.GetAsync(updateInfo.DownloadURL, HttpCompletionOption.ResponseHeadersRead);
+
+                // Use the object passed from the event args
+                string downloadUrl = updateInfo.DownloadURL;
+
+                using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
                 response.EnsureSuccessStatusCode();
 
                 long? totalBytes = response.Content.Headers.ContentLength;
@@ -325,14 +352,9 @@ public partial class MainForm : Form
 
         if (restart != DialogResult.Yes) return;
 
-        // ── Silently run installer, close app, let Inno Setup reopen it ──
+        // ── Silently run installer ──
         try
         {
-            // Inno Setup flags:
-            //   /SILENT             = Show progress bar only, no wizard
-            //   /CLOSEAPPLICATIONS  = Auto-close apps holding the target files
-            //   /RESTARTAPPLICATIONS= Reopen the app after install
-            //   /NORESTART          = Do not reboot Windows if files are locked
             string args = "/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART";
 
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -340,10 +362,9 @@ public partial class MainForm : Form
                 FileName = tempInstaller,
                 Arguments = args,
                 UseShellExecute = true,
-                Verb = "runas"   // UAC prompt for Program Files
+                Verb = "runas"
             });
 
-            // Force immediate exit so the installer can replace the .exe
             _isUpdating = true;
             Application.Exit();
         }
