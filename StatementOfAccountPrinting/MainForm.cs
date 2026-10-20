@@ -178,34 +178,32 @@ public partial class MainForm : Form
         toolStripTextBoxSearch.Visible = true;
         toolStripButtonClear.Visible = true;
     }
+    public string GetAppVersion()
+    {
+        string cleanVersion = "1.0.0.0";
+        try
+        {
+            // 1. Get the path of the running .exe
+            string exePath = Assembly.GetEntryAssembly()?.Location;
+
+            if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
+            {
+                // 2. Read the FileVersion (e.g., "1.0.0.2")
+                string? fileVersion = FileVersionInfo.GetVersionInfo(exePath).FileVersion;
+
+                if (!string.IsNullOrEmpty(fileVersion))
+                {
+                    cleanVersion = fileVersion;
+                }
+            }
+        }
+        catch { }
+
+        return cleanVersion;
+    }
     private void LoadUIFromSettings()
     {
-        // 1. Try to get NBGV version (InformationalVersion)
-        string displayVersion = Assembly.GetEntryAssembly()
-            ?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-            ?.InformationalVersion;
-
-        // 2. If NBGV is empty, fallback to FileVersion (Windows Properties -> Details)
-        if (string.IsNullOrEmpty(displayVersion))
-        {
-            try
-            {
-                string exePath = Assembly.GetEntryAssembly()?.Location;
-                if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
-                    displayVersion = FileVersionInfo.GetVersionInfo(exePath).FileVersion;
-            }
-            catch { }
-        }
-
-        // 3. Final fallback if all else fails
-        if (string.IsNullOrEmpty(displayVersion))
-            displayVersion = "1.0.0.0";
-
-        // (Optional) Remove the git hash for a cleaner title (e.g., "1.0.0.2+abc123" -> "1.0.0.2")
-        string cleanVersion = displayVersion.Split('+')[0];
-
-        string AppTitle = $"SoA Printing — Public Cemetery Lot Rental v{cleanVersion}";
-        this.Text = AppTitle;
+        this.Text = $"SoA Printing — Public Cemetery Lot Rental v{GetAppVersion()}";
 
         RegisterFonts();
 
@@ -1963,7 +1961,7 @@ public partial class MainForm : Form
     }
     private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
     {
-        using var dlg = new About();
+        using var dlg = new About(this);
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
     }
 

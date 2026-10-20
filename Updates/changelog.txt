@@ -1,4 +1,4 @@
-Version 1.0.0.3 (October 20, 2026)
+Version 1.0.2.64463 (October 20, 2026)
 ----------------------------------
 NEW FEATURES:
 - Added a search bar to filter records by Name, Deceased, or Block.
