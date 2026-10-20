@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <item>
-    <version>1.0.8.37337</version>
+    <version>1.0.8.1</version>
     <url>https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/soa-printing-cemetery.exe</url>
     <changelog>https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/changelog.txt</changelog>
     <mandatory>false</mandatory>

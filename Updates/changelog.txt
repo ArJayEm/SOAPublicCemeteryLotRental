@@ -1,4 +1,4 @@
-Version 1.0.8.37337 (October 24, 2026)
+Version 1.0.8.1 (October 24, 2026)
 --------------------------------------
 IMPROVEMENTS:
 - Added app icon.
