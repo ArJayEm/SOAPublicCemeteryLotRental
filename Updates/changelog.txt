@@ -1,3 +1,8 @@
+Version 1.0.6.46842 (October 24, 2026)
+--------------------------------------
+BUG FIXES:
+- Check for Updates function.
+
 Version 1.0.2.64463 (October 20, 2026)
 ----------------------------------
 NEW FEATURES:
