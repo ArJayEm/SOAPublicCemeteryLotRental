@@ -59,6 +59,14 @@
     <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
   </Content>
+  <Content Include="Resources\Icons\receipt.png">
+    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+  </Content>
+  <Content Include="Resources\Icons\receipt.ico">
+    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+  </Content>
     <Content Include="Resources\Fonts\calibri.ttf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

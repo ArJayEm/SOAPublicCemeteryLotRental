@@ -37,8 +37,10 @@
             groupBox2 = new GroupBox();
             label3 = new Label();
             lblVersion = new Label();
+            pictureBox1 = new PictureBox();
             groupBox1.SuspendLayout();
             groupBox2.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)pictureBox1).BeginInit();
             SuspendLayout();
             // 
             // groupBox1
@@ -90,7 +92,7 @@
             // 
             label2.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             label2.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            label2.Location = new Point(53, 9);
+            label2.Location = new Point(81, 9);
             label2.Name = "label2";
             label2.Size = new Size(201, 38);
             label2.TabIndex = 14;
@@ -119,12 +121,22 @@
             // lblVersion
             // 
             lblVersion.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            lblVersion.Location = new Point(18, 47);
+            lblVersion.Location = new Point(86, 47);
             lblVersion.Name = "lblVersion";
-            lblVersion.Size = new Size(264, 25);
+            lblVersion.Size = new Size(196, 25);
             lblVersion.TabIndex = 3;
             lblVersion.Text = "Version";
             lblVersion.TextAlign = ContentAlignment.MiddleCenter;
+            // 
+            // pictureBox1
+            // 
+            pictureBox1.Image = Properties.Resources.receipt;
+            pictureBox1.Location = new Point(18, 14);
+            pictureBox1.Name = "pictureBox1";
+            pictureBox1.Size = new Size(62, 55);
+            pictureBox1.SizeMode = PictureBoxSizeMode.StretchImage;
+            pictureBox1.TabIndex = 16;
+            pictureBox1.TabStop = false;
             // 
             // About
             // 
@@ -133,6 +145,7 @@
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(300, 276);
             ControlBox = false;
+            Controls.Add(pictureBox1);
             Controls.Add(lblVersion);
             Controls.Add(groupBox2);
             Controls.Add(label2);
@@ -144,6 +157,7 @@
             groupBox1.ResumeLayout(false);
             groupBox1.PerformLayout();
             groupBox2.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)pictureBox1).EndInit();
             ResumeLayout(false);
         }
 
@@ -158,5 +172,6 @@
         private GroupBox groupBox2;
         private Label label3;
         private Label lblVersion;
+        private PictureBox pictureBox1;
     }
 }

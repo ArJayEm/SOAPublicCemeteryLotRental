@@ -266,6 +266,7 @@ partial class MainForm
         Controls.Add(tabBlocks);
         Controls.Add(lblStatus);
         Controls.Add(menuStrip1);
+        Icon = (Icon)resources.GetObject("$this.Icon");
         MainMenuStrip = menuStrip1;
         Margin = new Padding(3, 2, 3, 2);
         MinimumSize = new Size(781, 400);
