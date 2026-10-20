@@ -34,6 +34,8 @@ partial class MainForm
         exportAllonly000TotalAmountDueToolStripMenuItem = new ToolStripMenuItem();
         toolStripButtonImportExcel = new ToolStripButton();
         toolStripMenuItemBlockFilter = new ToolStripButton();
+        toolStripTextBoxSearch = new ToolStripTextBox();
+        toolStripButtonClear = new ToolStripButton();
         tabPage2 = new TabPage();
         tabPage1 = new TabPage();
         tabBlocks = new TabControl();
@@ -138,7 +140,7 @@ partial class MainForm
         // toolStrip1
         // 
         toolStrip1.Font = new Font("Segoe UI", 12F);
-        toolStrip1.Items.AddRange(new ToolStripItem[] { toolStripSplitButtonExport, toolStripButtonImportExcel, toolStripMenuItemBlockFilter });
+        toolStrip1.Items.AddRange(new ToolStripItem[] { toolStripSplitButtonExport, toolStripButtonImportExcel, toolStripMenuItemBlockFilter, toolStripTextBoxSearch, toolStripButtonClear });
         toolStrip1.Location = new Point(0, 29);
         toolStrip1.Name = "toolStrip1";
         toolStrip1.Padding = new Padding(10, 0, 10, 0);
@@ -202,6 +204,24 @@ partial class MainForm
         toolStripMenuItemBlockFilter.Size = new Size(101, 25);
         toolStripMenuItemBlockFilter.Text = "All Blocks (*)";
         toolStripMenuItemBlockFilter.Click += toolStripMenuItemBlockFilter_Click;
+        // 
+        // toolStripTextBoxSearch
+        // 
+        toolStripTextBoxSearch.Name = "toolStripTextBoxSearch";
+        toolStripTextBoxSearch.Size = new Size(200, 28);
+        toolStripTextBoxSearch.ToolTipText = "Search List";
+        toolStripTextBoxSearch.KeyDown += toolStripTextBoxSearch_KeyDown;
+        toolStripTextBoxSearch.TextChanged += toolStripTextBoxSearch_TextChanged;
+        // 
+        // toolStripButtonClear
+        // 
+        toolStripButtonClear.DisplayStyle = ToolStripItemDisplayStyle.Image;
+        toolStripButtonClear.Enabled = false;
+        toolStripButtonClear.Image = Properties.Resources.close;
+        toolStripButtonClear.ImageTransparentColor = Color.Magenta;
+        toolStripButtonClear.Name = "toolStripButtonClear";
+        toolStripButtonClear.Size = new Size(23, 25);
+        toolStripButtonClear.Click += toolStripButtonClear_Click;
         // 
         // tabPage2
         // 
@@ -285,4 +305,6 @@ partial class MainForm
     private ToolStripMenuItem checkForUpdatesToolStripMenuItem;
     private ToolStripSeparator toolStripSeparator1;
     private ToolStripMenuItem aboutToolStripMenuItem;
+    private ToolStripTextBox toolStripTextBoxSearch;
+    private ToolStripButton toolStripButtonClear;
 }

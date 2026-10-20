@@ -6,6 +6,7 @@ using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 using System.ComponentModel;
 using System.Configuration;
+using System.Diagnostics;
 using System.Reflection;
 
 namespace StatementOfAccountPrinting;
@@ -17,6 +18,7 @@ public partial class MainForm : Form
     private bool _blockFilterInitialized;
     private bool _isUpdating = false;
     private BlockFilterPopup? _blockPopup;
+    private System.Windows.Forms.Timer _searchDebounceTimer;
     private readonly bool IsDevelopment =
 #if DEBUG
         true;
@@ -27,6 +29,12 @@ public partial class MainForm : Form
     public MainForm()
     {
         InitializeComponent();
+
+        // Setup the debounce timer
+        _searchDebounceTimer = new System.Windows.Forms.Timer();
+        _searchDebounceTimer.Interval = 300; // 300 milliseconds
+        _searchDebounceTimer.Tick += SearchDebounceTimer_Tick;
+
         LoadUIFromSettings();
         QuestPDF.Settings.License = LicenseType.Community;
     }
@@ -39,7 +47,7 @@ public partial class MainForm : Form
         tabBlocks.Visible = false;
         toolStripButtonImportExcel.Visible = false;
 
-        var emptyStatePanel = new Panel
+        var emptyStatePanel = new System.Windows.Forms.Panel
         {
             Name = "panelEmptyState",
             Width = 300,
@@ -47,7 +55,7 @@ public partial class MainForm : Form
             BackColor = System.Drawing.Color.Transparent
         };
 
-        var messageLabel = new Label
+        var messageLabel = new System.Windows.Forms.Label
         {
             Text = "No records found.\nImport an Excel file to get started.",
             Font = new Font("Segoe UI", 11F, FontStyle.Regular),
@@ -57,7 +65,7 @@ public partial class MainForm : Form
             Height = 50
         };
 
-        var importBtn = new Button
+        var importBtn = new System.Windows.Forms.Button
         {
             Text = "Import Excel",
             Width = 160,
@@ -117,14 +125,31 @@ public partial class MainForm : Form
     }
     private void LoadUIFromSettings()
     {
-        var assemblyEntry = Assembly.GetEntryAssembly().GetName().Version.ToString();
-        var reflectionAssesmblyEntry = System.Reflection.Assembly
-                    .GetExecutingAssembly()
-                    .GetName()
-                    .Version?
-                    .ToString();
-        string version = $" {(assemblyEntry ?? reflectionAssesmblyEntry ?? "")}";
-        string AppTitle = $"SoA Printing — Public Cemetery Lot Rental{version}";
+        // 1. Try to get NBGV version (InformationalVersion)
+        string displayVersion = Assembly.GetEntryAssembly()
+            ?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        // 2. If NBGV is empty, fallback to FileVersion (Windows Properties -> Details)
+        if (string.IsNullOrEmpty(displayVersion))
+        {
+            try
+            {
+                string exePath = Assembly.GetEntryAssembly()?.Location;
+                if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
+                    displayVersion = FileVersionInfo.GetVersionInfo(exePath).FileVersion;
+            }
+            catch { }
+        }
+
+        // 3. Final fallback if all else fails
+        if (string.IsNullOrEmpty(displayVersion))
+            displayVersion = "1.0.0.0";
+
+        // (Optional) Remove the git hash for a cleaner title (e.g., "1.0.0.2+abc123" -> "1.0.0.2")
+        string cleanVersion = displayVersion.Split('+')[0];
+
+        string AppTitle = $"SoA Printing — Public Cemetery Lot Rental v{cleanVersion}";
         this.Text = AppTitle;
 
         RegisterFonts();
@@ -304,20 +329,35 @@ public partial class MainForm : Form
     }
     private async Task RebuildBlockTabsAsync()
     {
-        if (_accounts.Count == 0)
+        if (_accounts.Count == 0) return;
+
+        string searchTerm = toolStripTextBoxSearch.Text.Trim();
+        bool isSearching = !string.IsNullOrWhiteSpace(searchTerm);
+
+        // 1. Filter the accounts
+        var filteredAccounts = _accounts.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(searchTerm))
         {
-            tabBlocks.TabPages.Clear();
-            return;
+            filteredAccounts = filteredAccounts.Where(a =>
+                (a.LesseeName != null && a.LesseeName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                (a.NameOfDeceased != null && a.NameOfDeceased.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                (a.Address != null && a.Address.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                (a.LotBlockNumber != null && a.LotBlockNumber.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+            // Add any other fields you want to search here
+            );
         }
 
         bool skipZero = Properties.Settings.Default.SkipZeroTotal;
 
         // Group first — cheap, can happen on UI thread
-        var groups = _accounts
+        var groups = filteredAccounts
             .Where(a => !skipZero || !IsZeroTotal(a.TotalAmountDue))
-            .GroupBy(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
-                            ? "(No Block)"
-                            : a.LotBlockNumber.Trim())
+            .GroupBy(a =>
+                // 👇 If searching, put everything in one "Search Results" group
+                isSearching ? "Search Results" :
+                (string.IsNullOrWhiteSpace(a.LotBlockNumber) ? "(No Block)" : a.LotBlockNumber.Trim())
+            )
             .OrderBy(g => ExtractBlockNumber(g.Key))
             .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -1629,40 +1669,35 @@ public partial class MainForm : Form
     #region SAVE LAST IMPORTED ACCOUNTS...
     private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
     {
-        // 1. Ask the user (unless we are updating)
-        if (!_isUpdating)
+        // 1. If we are restarting for an update, save and let it close silently
+        if (_isUpdating)
         {
-            var result = MessageBox.Show(
-                "Close the application?",
-                "Confirm",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
+            try { SaveAccountsToDisk(); } catch { }
+            return; // e.Cancel is false, so it closes.
+        }
 
-            // If they click No, STOP right here and do not close.
-            if (result == DialogResult.Yes)
-            {
-                // 2. Save data
-                try
-                {
-                    SaveAccountsToDisk();
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine("Save failed: " + ex.Message);
-                }
+        // 2. If the user is trying to close the app normally (X button, menu, etc.)
+        var result = MessageBox.Show(
+            "Close the application?",
+            "Confirm",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
 
-                // 3. Close the app
-                if (_isUpdating)
-                {
-                    // Force kill immediately so the installer can unlock the .exe
-                    Environment.Exit(0);
-                }
-                else
-                {
-                    // Normal graceful close
-                    this.Close();
-                }
-            }
+        // If they click NO, we MUST set e.Cancel = true to stop the close!
+        if (result != DialogResult.Yes)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        // 3. If they click YES, save data. The form will close automatically.
+        try
+        {
+            SaveAccountsToDisk();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("Save failed: " + ex.Message);
         }
     }
     private void SaveAccountsToDisk()
@@ -1790,5 +1825,35 @@ public partial class MainForm : Form
     private async void checkForUpdatesToolStripMenuItem_Click(object sender, EventArgs e)
     {
         await CheckForUpdatesBlocking();
+    }
+
+    private void toolStripTextBoxSearch_KeyDown(object sender, KeyEventArgs e)
+    {
+        // Check if the user pressed Enter
+        //if (e.KeyCode == Keys.Enter)
+        //{
+        //    e.SuppressKeyPress = true;
+        //    e.Handled = true;
+
+        //    _ = RebuildBlockTabsAsync();
+        //}
+    }
+    private void toolStripTextBoxSearch_TextChanged(object sender, EventArgs e)
+    {
+        _searchDebounceTimer.Stop();
+        _searchDebounceTimer.Start();
+
+        string searchTerm = toolStripTextBoxSearch.Text.Trim();
+        toolStripButtonClear.Enabled = !string.IsNullOrEmpty(searchTerm);
+    }
+    private void SearchDebounceTimer_Tick(object sender, EventArgs e)
+    {
+        _searchDebounceTimer.Stop();
+        _ = RebuildBlockTabsAsync();
+    }
+
+    private void toolStripButtonClear_Click(object sender, EventArgs e)
+    {
+        toolStripTextBoxSearch.Text = "";
     }
 }
