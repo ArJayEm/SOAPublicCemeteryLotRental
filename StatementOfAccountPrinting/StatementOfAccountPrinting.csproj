@@ -1,9 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-	  <Version>1.0.6.46842</Version>
-	  <AssemblyVersion>1.0.6.46842</AssemblyVersion>
-	  <FileVersion>1.0.6.46842</FileVersion>
+	  <Version>1.0.8.37337</Version>
+	  <AssemblyVersion>1.0.8.37337</AssemblyVersion>
+	  <FileVersion>1.0.8.37337</FileVersion>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
@@ -11,7 +11,7 @@
     <AssemblyName>StatementOfAccountPrinting</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <ApplicationIcon></ApplicationIcon>
+    <ApplicationIcon>Resources\Icons\receipt.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

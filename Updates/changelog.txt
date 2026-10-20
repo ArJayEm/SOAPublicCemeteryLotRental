@@ -1,4 +1,10 @@
-Version 1.0.6.46842 (October 24, 2026)
+Version 1.0.8.37337 (October 24, 2026)
+--------------------------------------
+IMPROVEMENTS:
+- Added app icon.
+- Open bug, fixes, and improvements url.
+
+Version 1.0.8.37337 (October 24, 2026)
 --------------------------------------
 BUG FIXES:
 - Check for Updates function.

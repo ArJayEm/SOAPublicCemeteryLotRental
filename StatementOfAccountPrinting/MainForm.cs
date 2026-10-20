@@ -47,6 +47,7 @@ public partial class MainForm : Form
         LoadUIFromSettings();
         QuestPDF.Settings.License = LicenseType.Community;
     }
+    #region FIRST LOAD...
     private async void MainForm_Shown(object sender, EventArgs e)
     {
         var cachePath = GetAccountsCachePath();
@@ -89,6 +90,243 @@ public partial class MainForm : Form
             CacheClearedUI();
         }
     }
+    public string GetAppVersion()
+    {
+        string cleanVersion = "1.0.0.0";
+        try
+        {
+            // 1. Get the path of the running .exe
+            string exePath = Assembly.GetEntryAssembly()?.Location;
+
+            if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
+            {
+                // 2. Read the FileVersion (e.g., "1.0.0.2")
+                string? fileVersion = FileVersionInfo.GetVersionInfo(exePath).FileVersion;
+
+                if (!string.IsNullOrEmpty(fileVersion))
+                {
+                    cleanVersion = fileVersion;
+                }
+            }
+        }
+        catch { }
+
+        return cleanVersion;
+    }
+    private void LoadUIFromSettings()
+    {
+        this.Text = $"SoA Printing — Public Cemetery Lot Rental v{GetAppVersion()}";
+
+        RegisterFonts();
+
+        var isWordExportEnabled = Properties.Settings.Default.EnableWordExport;
+        var savedFormat = !isWordExportEnabled ? "PDF" : Properties.Settings.Default.ExportFormat;
+        toolStripSplitButtonExport.Text = $"Export All as {savedFormat}";
+        bool isPdf = savedFormat == "PDF";
+        Bitmap bmp = isPdf ? Properties.Resources.pdf : Properties.Resources.doc;
+        toolStripSplitButtonExport.Image = bmp;
+        //fileToolStripMenuItem.Enabled = !isPdf;
+
+        importTemplateToolStripMenuItem.Visible = isWordExportEnabled;
+        exportTemplateToolStripMenuItem.Visible = isWordExportEnabled;
+        toolStripSeparator1.Visible = isWordExportEnabled;
+
+        string devSetting = ConfigurationManager.AppSettings["IsDevelopment"];
+        //var IsDevelopment = bool.TryParse(devSetting, out bool result) && result;
+
+        //checkForUpdatesToolStripMenuItem.Visible = IsDevelopment;
+    }
+    private void RegisterFonts()
+    {
+        List<Stream> _fontStreams = new();
+
+        foreach (var path in new[]
+        {
+            "Resources/Fonts/calibri.ttf",
+            "Resources/Fonts/calibrib.ttf",
+            "Resources/Fonts/calibrii.ttf",
+        })
+        {
+            var stream = File.OpenRead(path);
+            _fontStreams.Add(stream);
+            FontManager.RegisterFontFromStream(stream);
+        }
+
+        // ── Times New Roman (system font — register from Windows\Fonts) ──
+        string winFonts = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+        foreach (var file in new[] { "times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf" })
+        {
+            var full = Path.Combine(winFonts, file);
+            if (!File.Exists(full)) continue;
+
+            var stream = File.OpenRead(full);
+            _fontStreams.Add(stream);
+            FontManager.RegisterFontFromStream(stream);
+        }
+    }
+    #endregion
+    #region UPDATES...
+    private async Task CheckForUpdatesBlocking()
+    {
+        AutoUpdater.SetOwner(this);
+        AutoUpdater.RunUpdateAsAdmin = false;
+
+        // ── 1. Force AutoUpdater to read the FileVersion ──
+        try
+        {
+            string currentVersionStr = GetAppVersion();
+            if (Version.TryParse(currentVersionStr, out var parsedVersion))
+            {
+                // This tells AutoUpdater.NET: "My installed version is 1.0.2.64463"
+                AutoUpdater.InstalledVersion = parsedVersion;
+            }
+        }
+        catch { }
+
+        UpdateInfoEventArgs updateInfo = null;
+
+        var tcs = new TaskCompletionSource<bool>();
+        AutoUpdaterDotNET.AutoUpdater.CheckForUpdateEventHandler handler = null;
+
+        handler = (args) =>
+        {
+            updateInfo = args;
+            AutoUpdaterDotNET.AutoUpdater.CheckForUpdateEvent -= handler;
+            tcs.TrySetResult(true);
+        };
+
+        AutoUpdaterDotNET.AutoUpdater.CheckForUpdateEvent += handler;
+        AutoUpdaterDotNET.AutoUpdater.Start("https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/updates.xml");
+
+        var completed = await Task.WhenAny(tcs.Task, Task.Delay(10000));
+        if (completed != tcs.Task || updateInfo == null || updateInfo.Error != null)
+        {
+            MessageBox.Show("Could not connect to the update server.", "Update Error");
+            return;
+        }
+
+        // ── 2. Double check the version to prevent mandatory=true loops ──
+        string currentVersion = GetAppVersion();
+        string serverVersion = updateInfo.CurrentVersion;
+
+        // If the versions match exactly, ignore the prompt even if mandatory=true
+        if (string.Equals(currentVersion, serverVersion, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("You are already on the latest version.", "No Updates");
+            return;
+        }
+
+        if (!updateInfo.IsUpdateAvailable)
+        {
+            MessageBox.Show("You are already on the latest version.", "No Updates");
+            return;
+        }
+
+        // ── Ask user ──
+        var result = MessageBox.Show(
+            $"A new version ({serverVersion}) is available!\n" +
+            $"You are currently on version {currentVersion}.\n\n" +
+            "Do you want to download and install it now?\n\n" +
+            "The app will briefly restart to apply the update.",
+            "Update Available",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Information);
+
+        if (result != DialogResult.Yes) return;
+
+        // Open the changelog URL in the browser
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = updateInfo.ChangelogURL,
+                UseShellExecute = true
+            });
+        }
+        catch { }
+
+        // ── Show progress bar while downloading ──
+        string tempInstaller = Path.Combine(Path.GetTempPath(), "soa-printing-cemetery.exe");
+        bool downloadSuccess = false;
+
+        await ProgressDialog.RunAsync(this, "Downloading update...", async prog =>
+        {
+            prog.Report((10, "Connecting..."));
+
+            try
+            {
+                using var client = new System.Net.Http.HttpClient();
+
+                // Use the object passed from the event args
+                string downloadUrl = updateInfo.DownloadURL;
+
+                using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+
+                long? totalBytes = response.Content.Headers.ContentLength;
+                using var contentStream = await response.Content.ReadAsStreamAsync();
+                using var fileStream = new FileStream(tempInstaller, FileMode.Create, FileAccess.Write, FileShare.None);
+
+                var buffer = new byte[8192];
+                long totalRead = 0;
+                int read;
+
+                while ((read = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                {
+                    await fileStream.WriteAsync(buffer, 0, read);
+                    totalRead += read;
+
+                    if (totalBytes.HasValue)
+                    {
+                        int pct = (int)((totalRead / (double)totalBytes.Value) * 100);
+                        prog.Report((pct, $"Downloading... {totalRead / 1024} KB / {totalBytes.Value / 1024} KB"));
+                    }
+                }
+
+                prog.Report((100, "Download complete."));
+                downloadSuccess = true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Failed to download update:\n" + ex.Message, "Error");
+            }
+        }, keepOpenWhenDone: false);
+
+        if (!downloadSuccess) return;
+
+        // ── Confirm restart ──
+        var restart = MessageBox.Show(
+            "The update is ready.\n\n" +
+            "The app will close now to install the update, then reopen automatically.\n\n" +
+            "Continue?",
+            "Restart Required",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
+
+        if (restart != DialogResult.Yes) return;
+
+        // ── Silently run installer ──
+        try
+        {
+            string args = "/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART";
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = tempInstaller,
+                Arguments = args,
+                UseShellExecute = true,
+                Verb = "runas"
+            });
+
+            _isUpdating = true;
+            Application.Exit();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Failed to run installer:\n" + ex.Message, "Error");
+        }
+    }
+    #endregion
     private void CacheClearedUI()
     {
         tabBlocks.Visible = false;
@@ -177,229 +415,6 @@ public partial class MainForm : Form
         toolStripButtonImportExcel.Visible = true;
         toolStripTextBoxSearch.Visible = true;
         toolStripButtonClear.Visible = true;
-    }
-    public string GetAppVersion()
-    {
-        string cleanVersion = "1.0.0.0";
-        try
-        {
-            // 1. Get the path of the running .exe
-            string exePath = Assembly.GetEntryAssembly()?.Location;
-
-            if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
-            {
-                // 2. Read the FileVersion (e.g., "1.0.0.2")
-                string? fileVersion = FileVersionInfo.GetVersionInfo(exePath).FileVersion;
-
-                if (!string.IsNullOrEmpty(fileVersion))
-                {
-                    cleanVersion = fileVersion;
-                }
-            }
-        }
-        catch { }
-
-        return cleanVersion;
-    }
-    private void LoadUIFromSettings()
-    {
-        this.Text = $"SoA Printing — Public Cemetery Lot Rental v{GetAppVersion()}";
-
-        RegisterFonts();
-
-        var isWordExportEnabled = Properties.Settings.Default.EnableWordExport;
-        var savedFormat = !isWordExportEnabled ? "PDF" : Properties.Settings.Default.ExportFormat;
-        toolStripSplitButtonExport.Text = $"Export All as {savedFormat}";
-        bool isPdf = savedFormat == "PDF";
-        Bitmap bmp = isPdf ? Properties.Resources.pdf : Properties.Resources.doc;
-        toolStripSplitButtonExport.Image = bmp;
-        //fileToolStripMenuItem.Enabled = !isPdf;
-
-        importTemplateToolStripMenuItem.Visible = isWordExportEnabled;
-        exportTemplateToolStripMenuItem.Visible = isWordExportEnabled;
-        toolStripSeparator1.Visible = isWordExportEnabled;
-
-        string devSetting = ConfigurationManager.AppSettings["IsDevelopment"];
-        //var IsDevelopment = bool.TryParse(devSetting, out bool result) && result;
-
-        //checkForUpdatesToolStripMenuItem.Visible = IsDevelopment;
-    }
-    private async Task CheckForUpdatesBlocking()
-    {
-        AutoUpdater.SetOwner(this);
-        AutoUpdater.RunUpdateAsAdmin = false;
-
-        // ── 1. Force AutoUpdater to read the FileVersion ──
-        try
-        {
-            string currentVersionStr = GetAppVersion();
-            if (Version.TryParse(currentVersionStr, out var parsedVersion))
-            {
-                // This tells AutoUpdater.NET: "My installed version is 1.0.2.64463"
-                AutoUpdater.InstalledVersion = parsedVersion;
-            }
-        }
-        catch { }
-
-        UpdateInfoEventArgs updateInfo = null;
-
-        var tcs = new TaskCompletionSource<bool>();
-        AutoUpdaterDotNET.AutoUpdater.CheckForUpdateEventHandler handler = null;
-
-        handler = (args) =>
-        {
-            updateInfo = args;
-            AutoUpdaterDotNET.AutoUpdater.CheckForUpdateEvent -= handler;
-            tcs.TrySetResult(true);
-        };
-
-        AutoUpdaterDotNET.AutoUpdater.CheckForUpdateEvent += handler;
-        AutoUpdaterDotNET.AutoUpdater.Start("https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/updates.xml");
-
-        var completed = await Task.WhenAny(tcs.Task, Task.Delay(10000));
-        if (completed != tcs.Task || updateInfo == null || updateInfo.Error != null)
-        {
-            MessageBox.Show("Could not connect to the update server.", "Update Error");
-            return;
-        }
-
-        // ── 2. Double check the version to prevent mandatory=true loops ──
-        string currentVersion = GetAppVersion();
-        string serverVersion = updateInfo.CurrentVersion;
-
-        // If the versions match exactly, ignore the prompt even if mandatory=true
-        if (string.Equals(currentVersion, serverVersion, StringComparison.OrdinalIgnoreCase))
-        {
-            MessageBox.Show("You are already on the latest version.", "No Updates");
-            return;
-        }
-
-        if (!updateInfo.IsUpdateAvailable)
-        {
-            MessageBox.Show("You are already on the latest version.", "No Updates");
-            return;
-        }
-
-        // ── Ask user ──
-        var result = MessageBox.Show(
-            $"A new version ({serverVersion}) is available!\n" +
-            $"You are currently on version {currentVersion}.\n\n" +
-            "Do you want to download and install it now?\n\n" +
-            "The app will briefly restart to apply the update.",
-            "Update Available",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Information);
-
-        if (result != DialogResult.Yes) return;
-
-        // ── Show progress bar while downloading ──
-        string tempInstaller = Path.Combine(Path.GetTempPath(), "soa-printing-cemetery.exe");
-        bool downloadSuccess = false;
-
-        await ProgressDialog.RunAsync(this, "Downloading update...", async prog =>
-        {
-            prog.Report((10, "Connecting..."));
-
-            try
-            {
-                using var client = new System.Net.Http.HttpClient();
-
-                // Use the object passed from the event args
-                string downloadUrl = updateInfo.DownloadURL;
-
-                using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
-                response.EnsureSuccessStatusCode();
-
-                long? totalBytes = response.Content.Headers.ContentLength;
-                using var contentStream = await response.Content.ReadAsStreamAsync();
-                using var fileStream = new FileStream(tempInstaller, FileMode.Create, FileAccess.Write, FileShare.None);
-
-                var buffer = new byte[8192];
-                long totalRead = 0;
-                int read;
-
-                while ((read = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                {
-                    await fileStream.WriteAsync(buffer, 0, read);
-                    totalRead += read;
-
-                    if (totalBytes.HasValue)
-                    {
-                        int pct = (int)((totalRead / (double)totalBytes.Value) * 100);
-                        prog.Report((pct, $"Downloading... {totalRead / 1024} KB / {totalBytes.Value / 1024} KB"));
-                    }
-                }
-
-                prog.Report((100, "Download complete."));
-                downloadSuccess = true;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Failed to download update:\n" + ex.Message, "Error");
-            }
-        }, keepOpenWhenDone: false);
-
-        if (!downloadSuccess) return;
-
-        // ── Confirm restart ──
-        var restart = MessageBox.Show(
-            "The update is ready.\n\n" +
-            "The app will close now to install the update, then reopen automatically.\n\n" +
-            "Continue?",
-            "Restart Required",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question);
-
-        if (restart != DialogResult.Yes) return;
-
-        // ── Silently run installer ──
-        try
-        {
-            string args = "/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART";
-
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = tempInstaller,
-                Arguments = args,
-                UseShellExecute = true,
-                Verb = "runas"
-            });
-
-            _isUpdating = true;
-            Application.Exit();
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show("Failed to run installer:\n" + ex.Message, "Error");
-        }
-    }
-    private void RegisterFonts()
-    {
-        List<Stream> _fontStreams = new();
-
-        foreach (var path in new[]
-        {
-            "Resources/Fonts/calibri.ttf",
-            "Resources/Fonts/calibrib.ttf",
-            "Resources/Fonts/calibrii.ttf",
-        })
-        {
-            var stream = File.OpenRead(path);
-            _fontStreams.Add(stream);
-            FontManager.RegisterFontFromStream(stream);
-        }
-
-        // ── Times New Roman (system font — register from Windows\Fonts) ──
-        string winFonts = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
-        foreach (var file in new[] { "times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf" })
-        {
-            var full = Path.Combine(winFonts, file);
-            if (!File.Exists(full)) continue;
-
-            var stream = File.OpenRead(full);
-            _fontStreams.Add(stream);
-            FontManager.RegisterFontFromStream(stream);
-        }
     }
     private void Grid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
     {
