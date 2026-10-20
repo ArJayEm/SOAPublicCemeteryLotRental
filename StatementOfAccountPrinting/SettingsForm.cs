@@ -38,6 +38,9 @@
             cmbExportFormat.SelectedItem =
                 cmbExportFormat.Items.Contains(exportFormat) ? exportFormat : "PDF";
 
+            var cachePath = _mainForm.GetAccountsCachePath();
+            linkLabelClearCache.Enabled = File.Exists(cachePath);
+
             //UpdateCacheStatus();
         }
 
@@ -67,7 +70,7 @@
 
             try
             {
-                var path = MainForm.GetAccountsCachePath();
+                var path = _mainForm.GetAccountsCachePath();
                 if (File.Exists(path))
                     File.Delete(path);
 

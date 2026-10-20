@@ -1,1 +1,21 @@
-0.00 printing/skipZero & onlyZero UPDATE
+Version 1.0.0.3 (October 20, 2026)
+----------------------------------
+NEW FEATURES:
+- Added a search bar to filter records by Name, Deceased, or Block.
+- Added an "Empty State" screen with a large Import button when no data is loaded.
+- Users can now choose to load previous data or clear cache on startup.
+
+BUG FIXES:
+- Fixed PDF generation failing when exporting multiple blocks.
+- Fixed a bug where clearing the cache didn't actually delete the saved file.
+
+IMPROVEMENTS:
+- The "Export All as PDF" button now shows a live progress bar during generation.
+- Updated the app to use the latest version of QuestPDF for faster rendering.
+
+Version 1.0.0.2 (October 19, 2026)
+----------------------------------
+- Added AutoUpdater integration.
+
+Version 1.0.0.1 (October 15, 2026)
+- Initial release with PDF and Word export support.

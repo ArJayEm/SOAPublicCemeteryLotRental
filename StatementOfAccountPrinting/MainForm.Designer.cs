@@ -210,6 +210,7 @@ partial class MainForm
         toolStripTextBoxSearch.Name = "toolStripTextBoxSearch";
         toolStripTextBoxSearch.Size = new Size(200, 28);
         toolStripTextBoxSearch.ToolTipText = "Search List";
+        toolStripTextBoxSearch.Visible = false;
         toolStripTextBoxSearch.KeyDown += toolStripTextBoxSearch_KeyDown;
         toolStripTextBoxSearch.TextChanged += toolStripTextBoxSearch_TextChanged;
         // 
@@ -221,6 +222,7 @@ partial class MainForm
         toolStripButtonClear.ImageTransparentColor = Color.Magenta;
         toolStripButtonClear.Name = "toolStripButtonClear";
         toolStripButtonClear.Size = new Size(23, 25);
+        toolStripButtonClear.Visible = false;
         toolStripButtonClear.Click += toolStripButtonClear_Click;
         // 
         // tabPage2

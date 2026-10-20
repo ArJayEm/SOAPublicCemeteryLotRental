@@ -8,6 +8,12 @@ using System.ComponentModel;
 using System.Configuration;
 using System.Diagnostics;
 using System.Reflection;
+using DrawingColor = System.Drawing.Color;
+using DrawingSize = System.Drawing.Size;
+//using DrawingPoint = System.Drawing.Point;
+
+//using QuestPDFColor = QuestPDF.Infrastructure.Color;
+//using QuestPDFSize = QuestPDF.Infrastructure.Size;
 
 namespace StatementOfAccountPrinting;
 
@@ -19,6 +25,9 @@ public partial class MainForm : Form
     private bool _isUpdating = false;
     private BlockFilterPopup? _blockPopup;
     private System.Windows.Forms.Timer _searchDebounceTimer;
+    private string _lastSearchTerm = string.Empty;
+    private string _currentHighlightTerm = string.Empty;
+    private bool _cacheCleared = false;
     private readonly bool IsDevelopment =
 #if DEBUG
         true;
@@ -32,7 +41,7 @@ public partial class MainForm : Form
 
         // Setup the debounce timer
         _searchDebounceTimer = new System.Windows.Forms.Timer();
-        _searchDebounceTimer.Interval = 300; // 300 milliseconds
+        _searchDebounceTimer.Interval = 1000; // 300 milliseconds
         _searchDebounceTimer.Tick += SearchDebounceTimer_Tick;
 
         LoadUIFromSettings();
@@ -40,12 +49,56 @@ public partial class MainForm : Form
     }
     private async void MainForm_Shown(object sender, EventArgs e)
     {
-        await LoadAccountsFromDiskAsync();
+        var cachePath = GetAccountsCachePath();
+        if (File.Exists(cachePath))
+        {
+            // Ask the user
+            var result = MessageBox.Show(
+                "Previous data was found from your last session.\n\n" +
+                "Do you want to load it?\n\n" +
+                "Click YES to load previous data.\n" +
+                "Click NO to start fresh (clears cache).",
+                "Welcome Back",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (result == DialogResult.Yes)
+            {
+                // Load the cache
+                await LoadAccountsFromDiskAsync();
+            }
+            else
+            {
+                // User chose to start fresh. Delete the cache file.
+                try
+                {
+                    if (File.Exists(cachePath))
+                        File.Delete(cachePath);
+
+                    ClearCachedRecords();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Could not clear the cache:\n" + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+        else
+        {
+            // No cache exists, just show the empty state
+            CacheClearedUI();
+        }
     }
     private void CacheClearedUI()
     {
         tabBlocks.Visible = false;
         toolStripButtonImportExcel.Visible = false;
+        toolStripTextBoxSearch.Visible = false;
+        toolStripButtonClear.Visible = false;
+        toolStripMenuItemBlockFilter.Enabled = false;
+        toolStripSplitButtonExport.Enabled = false;
+
+        lblStatus.Text = "Cached records cleared.";
 
         var emptyStatePanel = new System.Windows.Forms.Panel
         {
@@ -122,6 +175,8 @@ public partial class MainForm : Form
         // 2) Show the tabs and toolbar button again
         tabBlocks.Visible = true;
         toolStripButtonImportExcel.Visible = true;
+        toolStripTextBoxSearch.Visible = true;
+        toolStripButtonClear.Visible = true;
     }
     private void LoadUIFromSettings()
     {
@@ -327,12 +382,102 @@ public partial class MainForm : Form
             FontManager.RegisterFontFromStream(stream);
         }
     }
+    private void Grid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+    {
+        // If not searching, do nothing
+        if (string.IsNullOrWhiteSpace(_currentHighlightTerm) || e.Value == null)
+            return;
+
+        string cellText = e.Value.ToString();
+
+        // Check if the cell contains the search term (case-insensitive)
+        if (cellText.Contains(_currentHighlightTerm, StringComparison.OrdinalIgnoreCase))
+        {
+            // Highlight the background (e.g., Yellow) and text (e.g., Black)
+            e.CellStyle.BackColor = DrawingColor.Yellow;
+            e.CellStyle.ForeColor = DrawingColor.Black;
+            e.CellStyle.SelectionBackColor = DrawingColor.Gold; // So it stays highlighted when clicked
+        }
+    }
+    private void Grid_CellPainting(object sender, DataGridViewCellPaintingEventArgs e)
+    {
+        // 1. Only paint if we are searching, and it's a data cell (not header)
+        if (string.IsNullOrWhiteSpace(_currentHighlightTerm) || e.RowIndex < 0 || e.Value == null)
+            return;
+
+        string cellText = e.Value.ToString();
+        int matchIndex = cellText.IndexOf(_currentHighlightTerm, StringComparison.OrdinalIgnoreCase);
+
+        // If no match, let the grid paint it normally
+        if (matchIndex < 0)
+            return;
+
+        // 2. Paint the background, borders, and selection normally
+        e.Paint(e.ClipBounds, DataGridViewPaintParts.All & ~DataGridViewPaintParts.ContentForeground);
+
+        // 3. Safely get the font
+        var font = e.CellStyle.Font ?? ((DataGridView)sender).Font;
+        var grid = (DataGridView)sender;
+
+        // 4. Get the text color (respect selection)
+        System.Drawing.Color textColor = e.CellStyle.ForeColor;
+        if ((e.State & DataGridViewElementStates.Selected) != 0)
+        {
+            textColor = e.CellStyle.SelectionForeColor;
+        }
+
+        // 5. Extract the pieces
+        string beforeMatch = cellText.Substring(0, matchIndex);
+        string match = cellText.Substring(matchIndex, _currentHighlightTerm.Length);
+        string afterMatch = cellText.Substring(matchIndex + _currentHighlightTerm.Length);
+
+        // 6. Calculate exact sizes using TextRenderer (much more accurate than MeasureString)
+        DrawingSize sizeBefore = TextRenderer.MeasureText(beforeMatch, font);
+        DrawingSize sizeMatch = TextRenderer.MeasureText(match, font);
+        DrawingSize sizeAfter = TextRenderer.MeasureText(afterMatch, font);
+
+        // 7. Determine exact X and Y coordinates based on cell padding
+        int x = e.CellBounds.X + e.CellStyle.Padding.Left;
+        int y = e.CellBounds.Y + e.CellStyle.Padding.Top;
+
+        // 8. Draw "before" part
+        if (beforeMatch.Length > 0)
+        {
+            TextRenderer.DrawText(e.Graphics, beforeMatch, font,
+                new Point(x, y), textColor, TextFormatFlags.NoPadding);
+            x += sizeBefore.Width;
+        }
+
+        // 9. Draw highlighted "match" part (NO extra padding here)
+        if (match.Length > 0)
+        {
+            // Draw yellow background exactly behind the text
+            e.Graphics.FillRectangle(Brushes.Yellow, x, y, sizeMatch.Width, e.CellBounds.Height - e.CellStyle.Padding.Vertical);
+
+            // Draw black text on top
+            TextRenderer.DrawText(e.Graphics, match, font,
+                new Point(x, y), System.Drawing.Color.Black, TextFormatFlags.NoPadding);
+
+            x += sizeMatch.Width;
+        }
+
+        // 10. Draw "after" part
+        if (afterMatch.Length > 0)
+        {
+            TextRenderer.DrawText(e.Graphics, afterMatch, font,
+                new Point(x, y), textColor, TextFormatFlags.NoPadding);
+        }
+
+        // 11. Tell the grid we handled the painting
+        e.Handled = true;
+    }
     private async Task RebuildBlockTabsAsync()
     {
         if (_accounts.Count == 0) return;
 
         string searchTerm = toolStripTextBoxSearch.Text.Trim();
         bool isSearching = !string.IsNullOrWhiteSpace(searchTerm);
+        _currentHighlightTerm = searchTerm;
 
         // 1. Filter the accounts
         var filteredAccounts = _accounts.AsEnumerable();
@@ -411,6 +556,9 @@ public partial class MainForm : Form
                         MultiSelect = true,
                         DataSource = blockList
                     };
+
+                    //grid.CellFormatting += Grid_CellFormatting;
+                    grid.CellPainting += Grid_CellPainting;
 
                     // ✅ Friendly headers as columns are auto-generated
                     grid.ColumnAdded += (s, e) =>
@@ -752,6 +900,8 @@ public partial class MainForm : Form
         _accounts.Clear();
         foreach (var a in imported)
             _accounts.Add(a);
+
+        _cacheCleared = false;
 
         //PopulateBlockFilter();
         RebuildBlockTabsAsync();
@@ -1575,7 +1725,7 @@ public partial class MainForm : Form
 
         //fileToolStripMenuItem.Enabled = !isPdf;
     }
-    public static string GetAccountsCachePath()
+    public string GetAccountsCachePath()
     {
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -1702,8 +1852,23 @@ public partial class MainForm : Form
     }
     private void SaveAccountsToDisk()
     {
+        if (_cacheCleared) return;
+
         var path = GetAccountsCachePath();
 
+        if (_accounts.Count == 0)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch { /* Ignore if locked */ }
+
+            return;
+        }
+
+        // Save the data if there are accounts
         var options = new System.Text.Json.JsonSerializerOptions
         {
             WriteIndented = true
@@ -1718,14 +1883,11 @@ public partial class MainForm : Form
         _selectedBlocks.Clear();
         _blockFilterInitialized = false;
 
+        _cacheCleared = true;
+
         RebuildBlockTabsAsync();
         UpdateBlockFilterCaption();
         CacheClearedUI();
-
-        toolStripMenuItemBlockFilter.Enabled = false;
-        toolStripSplitButtonExport.Enabled = false;
-
-        lblStatus.Text = "Cached records cleared.";
     }
     private async Task LoadAccountsFromDiskAsync()
     {
@@ -1773,6 +1935,8 @@ public partial class MainForm : Form
         _accounts.Clear();
         foreach (var a in loaded)
             _accounts.Add(a);
+
+        _cacheCleared = false;
 
         RebuildBlockTabsAsync();
         _selectedBlocks.Clear();
@@ -1840,16 +2004,45 @@ public partial class MainForm : Form
     }
     private void toolStripTextBoxSearch_TextChanged(object sender, EventArgs e)
     {
+        string searchTerm = toolStripTextBoxSearch.Text.Trim();
+
+        // Enable/disable the clear button based on if there is text
+        toolStripButtonClear.Enabled = !string.IsNullOrEmpty(searchTerm);
+
+        // 👇 If it's less than 3 characters, stop the timer and DO NOT search.
+        if (searchTerm.Length > 0 && searchTerm.Length < 3)
+        {
+            _searchDebounceTimer.Stop();
+            return;
+        }
+
+        // If it's exactly empty (length 0), we want to clear the search and show all tabs.
+        if (searchTerm.Length == 0)
+        {
+            _searchDebounceTimer.Stop();
+            if (_lastSearchTerm != string.Empty)
+            {
+                _lastSearchTerm = string.Empty;
+                _ = RebuildBlockTabsAsync(); // Reset to show all
+            }
+            return;
+        }
+
+        // If it's 3 or more characters, start the debounce timer
         _searchDebounceTimer.Stop();
         _searchDebounceTimer.Start();
-
-        string searchTerm = toolStripTextBoxSearch.Text.Trim();
-        toolStripButtonClear.Enabled = !string.IsNullOrEmpty(searchTerm);
     }
     private void SearchDebounceTimer_Tick(object sender, EventArgs e)
     {
         _searchDebounceTimer.Stop();
-        _ = RebuildBlockTabsAsync();
+
+        string currentSearchTerm = toolStripTextBoxSearch.Text.Trim();
+
+        if (currentSearchTerm != _lastSearchTerm)
+        {
+            _lastSearchTerm = currentSearchTerm;
+            _ = RebuildBlockTabsAsync();
+        }
     }
 
     private void toolStripButtonClear_Click(object sender, EventArgs e)
