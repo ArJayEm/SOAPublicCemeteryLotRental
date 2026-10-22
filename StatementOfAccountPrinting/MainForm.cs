@@ -330,7 +330,8 @@ public partial class MainForm : Form
         // ── Silently run installer ──
         try
         {
-            string args = "/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART";
+            //string args = "/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART";
+            string args = "/SILENT /NORESTART";
 
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
