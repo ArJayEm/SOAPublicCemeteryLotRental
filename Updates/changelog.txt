@@ -1,3 +1,8 @@
+Version 1.0.8.4 (October 22, 2026)
+--------------------------------------
+UPDATES:
+- Auto Updater Restart App
+
 Version 1.0.8.3 (October 22, 2026)
 --------------------------------------
 UPDATES:
@@ -9,7 +14,7 @@ IMPROVEMENTS:
 - Added app icon.
 - Open bug, fixes, and improvements url.
 
-Version 1.0.8.37337 (October 19, 2026)
+Version 1.0.8.47337 (October 19, 2026)
 --------------------------------------
 BUG FIXES:
 - Check for Updates function.
