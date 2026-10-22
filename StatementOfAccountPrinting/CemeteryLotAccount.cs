@@ -27,6 +27,8 @@ public class CemeteryLotAccount
     public string LotBlockNumber { get; set; } = string.Empty;
     public string AreaSqm { get; set; } = string.Empty;
     public string NameOfDeceased { get; set; } = string.Empty;
+    public string LastPayment { get; set; } = string.Empty;
+    public string DelinquentYear { get; set; } = string.Empty;
     public string RentalOrRenewalFee { get; set; } = string.Empty;
     public string Surcharge { get; set; } = string.Empty;
     public string Interest { get; set; } = string.Empty;
@@ -39,6 +41,8 @@ public class CemeteryLotAccount
         [nameof(CemeteryLotAccount.Address)] = "Address",
         [nameof(CemeteryLotAccount.LotBlockNumber)] = "Block / Lot",
         [nameof(CemeteryLotAccount.AreaSqm)] = "Area (sq.m.)",
+        [nameof(CemeteryLotAccount.LastPayment)] = "Last Payment",
+        [nameof(CemeteryLotAccount.DelinquentYear)] = "Delinquent Year",
         [nameof(CemeteryLotAccount.RentalOrRenewalFee)] = "Rental / Renewal Fee",
         [nameof(CemeteryLotAccount.Surcharge)] = "Surcharge",
         [nameof(CemeteryLotAccount.Interest)] = "Interest",

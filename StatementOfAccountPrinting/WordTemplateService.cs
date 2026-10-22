@@ -262,6 +262,8 @@ public static class WordTemplateService
             ["LotBlockNumber"] = (a.LotBlockNumber ?? "").Trim(),
             ["LOT AREA"] = (a.AreaSqm ?? "").Trim(),
             ["NAME OF DECEASED"] = (a.NameOfDeceased ?? "").Trim(),
+            ["LAST PAYMENT "] = (a.LastPayment ?? "").Trim(),
+            ["DELINQUENT YEAR"] = (a.DelinquentYear ?? "").Trim(),
             ["TOTAL BASIC TAX-Final"] = a.RentalOrRenewalFee ?? "0.00",
             ["SURCHARGE"] = a.Surcharge ?? "0.00",
             ["INTEREST"] = a.Interest ?? "0.00",

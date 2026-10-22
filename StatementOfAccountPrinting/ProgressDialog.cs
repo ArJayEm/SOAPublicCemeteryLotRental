@@ -94,6 +94,11 @@
         _close.Focus();
     }
 
+    private void InitializeComponent()
+    {
+
+    }
+
     /// <summary>
     /// Runs the work; if keepOpenWhenDone is true, the dialog stays open
     /// until the user clicks Close. Only then does RunAsync return.

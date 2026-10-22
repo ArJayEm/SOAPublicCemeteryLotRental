@@ -10,10 +10,6 @@ using System.Diagnostics;
 using System.Reflection;
 using DrawingColor = System.Drawing.Color;
 using DrawingSize = System.Drawing.Size;
-//using DrawingPoint = System.Drawing.Point;
-
-//using QuestPDFColor = QuestPDF.Infrastructure.Color;
-//using QuestPDFSize = QuestPDF.Infrastructure.Size;
 
 namespace StatementOfAccountPrinting;
 
@@ -28,6 +24,8 @@ public partial class MainForm : Form
     private string _lastSearchTerm = string.Empty;
     private string _currentHighlightTerm = string.Empty;
     private bool _cacheCleared = false;
+    private const string SearchHint = "Search Lessee, Deceased, Address…";
+    private bool _searchHintActive;
     private readonly bool IsDevelopment =
 #if DEBUG
         true;
@@ -41,7 +39,7 @@ public partial class MainForm : Form
 
         // Setup the debounce timer
         _searchDebounceTimer = new System.Windows.Forms.Timer();
-        _searchDebounceTimer.Interval = 1000; // 300 milliseconds
+        _searchDebounceTimer.Interval = 1000;
         _searchDebounceTimer.Tick += SearchDebounceTimer_Tick;
 
         LoadUIFromSettings();
@@ -113,7 +111,7 @@ public partial class MainForm : Form
 
         return cleanVersion;
     }
-    private void LoadUIFromSettings()
+    private async void LoadUIFromSettings()
     {
         this.Text = $"SoA Printing — Public Cemetery Lot Rental v{GetAppVersion()}";
 
@@ -162,6 +160,30 @@ public partial class MainForm : Form
             var stream = File.OpenRead(full);
             _fontStreams.Add(stream);
             FontManager.RegisterFontFromStream(stream);
+        }
+    }
+    private async Task InitSearchPlaceholder()
+    {
+        _searchHintActive = true;
+        toolStripTextBoxSearch.ForeColor = SystemColors.GrayText;
+        toolStripTextBoxSearch.Text = SearchHint;
+    }
+    private void toolStripTextBoxSearch_Enter(object sender, EventArgs e)
+    {
+        if (_searchHintActive)
+        {
+            _searchHintActive = false;
+            toolStripTextBoxSearch.Text = string.Empty;
+            toolStripTextBoxSearch.ForeColor = SystemColors.WindowText;
+        }
+    }
+    private void toolStripTextBoxSearch_Leave(object sender, EventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(toolStripTextBoxSearch.Text))
+        {
+            _searchHintActive = true;
+            toolStripTextBoxSearch.ForeColor = SystemColors.GrayText;
+            toolStripTextBoxSearch.Text = SearchHint;
         }
     }
     #endregion
@@ -327,6 +349,7 @@ public partial class MainForm : Form
         }
     }
     #endregion
+    #region CLEAR CACHE...
     private void CacheClearedUI()
     {
         tabBlocks.Visible = false;
@@ -377,6 +400,7 @@ public partial class MainForm : Form
             (emptyStatePanel.Width - importBtn.Width) / 2,
             messageLabel.Bottom + 10
         );
+        this.AcceptButton = importBtn;
         void CenterPanel()
         {
             if (emptyStatePanel.IsDisposed) return;
@@ -416,6 +440,8 @@ public partial class MainForm : Form
         toolStripTextBoxSearch.Visible = true;
         toolStripButtonClear.Visible = true;
     }
+    #endregion
+    #region DATAGRIDVIEW...
     private void Grid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
     {
         // If not searching, do nothing
@@ -665,6 +691,7 @@ public partial class MainForm : Form
             });
         }, keepOpenWhenDone: false);
 
+        Task.Delay(100);
         RestoreTabsUI();
     }
     private void TabBlocks_SelectedIndexChanged(object? sender, EventArgs e)
@@ -692,6 +719,8 @@ public partial class MainForm : Form
             .Cast<CemeteryLotAccount>()
             .ToList();
     }
+    #endregion
+    #region PRINT...
     private async void toolStripMenuItemExportSelected_Click(object sender, EventArgs e)
     {
         PrintSelected();
@@ -823,394 +852,6 @@ public partial class MainForm : Form
             return n;
 
         return int.MaxValue;
-    }
-    private void PrependAllTab()
-    {
-        if (_accounts.Count == 0) return;
-
-        var allPage = new TabPage
-        {
-            Text = $"ALL ({_accounts.Count})",
-            Tag = null
-        };
-
-        var grid = new DataGridView
-        {
-            Dock = DockStyle.Fill,
-            AutoGenerateColumns = true,
-            ReadOnly = true,
-            AllowUserToAddRows = false,
-            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells,
-            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            MultiSelect = true,
-            DataSource = _accounts
-        };
-
-        allPage.Controls.Add(grid);
-        tabBlocks.TabPages.Insert(0, allPage);
-    }
-    #region IMPORT...
-    private async void toolStripButtonImportExcel_Click(object sender, EventArgs e)
-    {
-        using var ofd = new OpenFileDialog
-        {
-            Title = "Select Excel file",
-            Filter = "Excel files (*.xlsx)|*.xlsx|All files (*.*)|*.*"
-        };
-        if (ofd.ShowDialog() != DialogResult.OK) return;
-
-        toolStripButtonImportExcel.Enabled = false;
-        toolStripSplitButtonExport.Enabled = false;
-        toolStripMenuItemBlockFilter.Enabled = false;
-        //toolStripMenuItemExportSelected.Enabled = false;   // ← add this
-        //toolStripMenuItemBlockFilter.Enabled = false;
-
-        var filePath = ofd.FileName;
-        var imported = new List<CemeteryLotAccount>();   // ← LOCAL list, not _accounts
-
-        // ── Run the export with progress ──
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-
-        bool ok = await ProgressDialog.RunAsync(this, "Importing Excel…", async progress =>
-        {
-            await Task.Run(() =>
-            {
-                progress.Report((0, "Opening workbook…"));
-
-                using var wb = new XLWorkbook(filePath);
-
-                foreach (var ws in wb.Worksheets)
-                {
-                    var sheetname = GetSheetName(ws);
-                    if (!sheetname.StartsWith("BLOCK") ||
-                        !ws.Name.TrimStart().StartsWith("BLOCK", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    var used = ws.RangeUsed();
-                    if (used == null) continue;
-
-                    int firstRow = used.FirstRow().RowNumber();
-                    int lastRow = used.LastRow().RowNumber();
-
-                    for (int rowNum = firstRow; rowNum <= lastRow; rowNum++)
-                    {
-                        var row = ws.Row(rowNum);
-
-                        var idxCell = row.Cell("A");
-                        if (idxCell.IsEmpty()) continue;
-                        if (!idxCell.Value.IsNumber) continue;
-
-                        var lessee = row.Cell("B").GetString().Trim();
-                        if (string.IsNullOrWhiteSpace(lessee)) continue;
-
-                        decimal rental = ParseNum(row, "V") + ParseNum(row, "W") + ParseNum(row, "X");
-                        decimal surcharge = ParseNum(row, "Z") + ParseNum(row, "AA") + ParseNum(row, "AB");
-                        decimal interest = ParseNum(row, "AD") + ParseNum(row, "AE") + ParseNum(row, "AF");
-                        decimal total = rental + surcharge + interest;
-
-                        // ⬇ Add to the LOCAL list, not _accounts
-                        imported.Add(new CemeteryLotAccount
-                        {
-                            LesseeName = lessee,
-                            NameOfDeceased = row.Cell("C").GetString().Trim(),
-                            Address = row.Cell("D").GetString().Trim(),
-                            LotBlockNumber = sheetname,
-                            AreaSqm = row.Cell("E").GetString().Trim(),
-                            RentalOrRenewalFee = rental.ToString("0.00"),
-                            Surcharge = surcharge.ToString("0.00"),
-                            Interest = interest.ToString("0.00"),
-                            TotalAmountDue = total.ToString("0.00"),
-                        });
-                    }
-                }
-
-                progress.Report((100, "Finishing up…"));
-            });
-        }, keepOpenWhenDone: false);
-
-        sw.Stop();
-
-        // ── Back on the UI thread — now safe to touch _accounts and dgvData ──
-        _accounts.Clear();
-        foreach (var a in imported)
-            _accounts.Add(a);
-
-        _cacheCleared = false;
-
-        //PopulateBlockFilter();
-        RebuildBlockTabsAsync();
-        UpdateBlockFilterCaption();
-        SaveAccountsToDisk();
-
-        toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;   // ← add this
-        lblStatus.Text = $"Imported {_accounts.Count} row(s) from " +
-                         $"{Path.GetFileName(filePath)}.";
-
-        if (toolStripSplitButtonExport.Enabled && toolStripSplitButtonExport.Visible)
-        {
-            toolStripMenuItemBlockFilter.Enabled = true;
-            toolStripSplitButtonExport.Select();
-        }
-
-        toolStripButtonImportExcel.Enabled = _accounts.Count > 0;
-        toolStripSplitButtonExport.Enabled = _accounts.Count > 0;
-        toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
-        //toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;
-        //toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
-
-        if (!ok)
-        {
-            lblStatus.Text = $"Export failed after {FormatElapsed(sw.Elapsed)}";
-            return;   // ← no prompt
-        }
-    }
-    private static decimal ParseNum(IXLRow row, string columnLetter)
-    {
-        try
-        {
-            var cell = row.Cell(columnLetter);
-            if (cell == null || cell.IsEmpty()) return 0m;
-
-            // Try cached numeric value first
-            if (cell.HasFormula)
-            {
-                var cached = cell.CachedValue;
-                if (!cached.IsBlank && cached.Type == XLDataType.Number)
-                    return (decimal)cached.GetNumber();
-            }
-
-            if (!cell.Value.IsBlank && cell.Value.Type == XLDataType.Number)
-                return (decimal)cell.Value.GetNumber();
-
-            // Fall back to parsing the display string
-            var s = cell.GetFormattedString()?.Trim() ?? "";
-            s = s.Replace("₱", "").Replace(",", "").Trim();
-            return decimal.TryParse(s, out var d) ? d : 0m;
-        }
-        catch
-        {
-            return 0m;
-        }
-    }
-    private static string GetCellValue(IXLRow row, string columnLetter)
-    {
-        try
-        {
-            var cell = row.Cell(columnLetter);
-            if (cell == null || cell.IsEmpty()) return string.Empty;
-
-            // Prefer cached formula result when available
-            if (cell.HasFormula)
-            {
-                var cached = cell.CachedValue;
-                if (!cached.IsBlank)
-                    return FormatCellValue(cached);
-            }
-
-            if (!cell.Value.IsBlank)
-                return FormatCellValue(cell.Value);
-
-            return cell.GetFormattedString()?.Trim() ?? string.Empty;
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
-    private static string FormatCellValue(XLCellValue v)
-    {
-        try
-        {
-            return v.Type switch
-            {
-                XLDataType.Number => v.GetNumber().ToString("0.00"),
-                XLDataType.DateTime => v.GetDateTime().ToString("yyyy-MM-dd"),
-                XLDataType.Boolean => v.GetBoolean().ToString(),
-                XLDataType.Text => v.GetText()?.Trim() ?? string.Empty,
-                XLDataType.Blank => string.Empty,
-                XLDataType.Error => string.Empty,
-                _ => v.ToString() ?? string.Empty,
-            };
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
-    private static string GetCell(IXLRangeRow row, int col)
-    {
-        try
-        {
-            var cell = row.Cell(col);
-            if (cell == null || cell.IsEmpty()) return string.Empty;
-
-            // Preserve what the user sees (not the underlying number)
-            return cell.GetFormattedString()?.Trim() ?? string.Empty;
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
-    private static string GetCellByLetter(IXLRangeRow row, string columnLetter)
-    {
-        try
-        {
-            var cell = row.Cell(columnLetter);   // "U", "Y", "AC", "AH"
-            if (cell == null || cell.IsEmpty()) return string.Empty;
-            return cell.GetFormattedString()?.Trim() ?? string.Empty;
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
-    private static string Norm(string s)
-    {
-        if (string.IsNullOrEmpty(s)) return string.Empty;
-        var sb = new System.Text.StringBuilder(s.Length);
-        foreach (var ch in s)
-        {
-            if (char.IsWhiteSpace(ch) || ch == '\u00A0') continue;
-            sb.Append(char.ToUpperInvariant(ch));
-        }
-        return sb.ToString();
-    }
-    private static string GetSheetName(IXLWorksheet ws)
-    {
-        var tab = ws.Name?.Trim() ?? string.Empty;
-        //if (!string.IsNullOrWhiteSpace(tab) &&
-        //    !tab.StartsWith("Sheet", StringComparison.OrdinalIgnoreCase) &&
-        //    !int.TryParse(tab, out _))
-        //{
-        //    return tab;
-        //}
-
-        var a2 = ws.Cell("A2").GetString();
-        // Strip the "INVENTORY OF CEMETERY..." prefix
-        var cleaned = a2
-            .Replace("INVENTORY OF CEMETERY", "", StringComparison.OrdinalIgnoreCase)
-            .Replace("LOT", "", StringComparison.OrdinalIgnoreCase)
-            .Replace("\t", "").Replace("\r", "").Replace("\n", "")
-            .Trim(' ', '-', ':')
-            .Trim();
-
-        return string.IsNullOrWhiteSpace(cleaned) ? tab : cleaned;
-    }
-    private static string SplitCamelCase(string input)
-    {
-        if (string.IsNullOrEmpty(input)) return input ?? "";
-
-        // Insert a space before each capital letter that follows a lowercase letter or digit
-        var spaced = System.Text.RegularExpressions.Regex.Replace(
-            input,
-            @"(?<=[a-z0-9])([A-Z])",
-            " $1");
-
-        // Also handle digits glued to letters: "AreaSqm2" → "Area Sqm 2"
-        spaced = System.Text.RegularExpressions.Regex.Replace(
-            spaced,
-            @"(?<=[A-Za-z])(\d)",
-            " $1");
-
-        return spaced.Trim();
-    }
-    #endregion
-    private void btnCreateTemplate_Click(object sender, EventArgs e)
-    {
-        ExportDocxTemplate();
-    }
-    private void ExportDocxTemplate()
-    {
-        using var sfd = new SaveFileDialog
-        {
-            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            Title = "Save blank template as",
-            FileName = WordTemplateService.TemplateFileName,
-            DefaultExt = "docx",
-            Filter = "Word documents (*.docx)|*.docx|All files (*.*)|*.*",
-            AddExtension = true,
-            OverwritePrompt = true
-        };
-
-        if (sfd.ShowDialog() != DialogResult.OK) return;
-
-        //exportTemplateToolStripMenuItem.Enabled = false;
-        Cursor = Cursors.WaitCursor;
-        try
-        {
-            WordTemplateService.CreateTemplate(sfd.FileName);
-
-            lblStatus.Text = $"Blank template saved: {Path.GetFileName(sfd.FileName)}";
-
-            if (AskYesNo(
-                "Blank template saved.\n\n" +
-                "You can now edit it in Word. If you want the app to use your edited " +
-                "version next time, replace this file:\n\n" +
-                $"  {WordTemplateService.ResolveTemplatePath()}"))
-            {
-                OpenFile(sfd.FileName);
-            }
-        }
-        catch (IOException ioEx)
-        {
-            MessageBox.Show(
-                "The destination file is open in another program (likely Word).\n" +
-                "Close it and try again.\n\n" +
-                $"Details: {ioEx.Message}",
-                "Template creation failed",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-        }
-        catch (Exception ex)
-        {
-            ShowError("Template creation failed", ex);
-        }
-        finally
-        {
-            Cursor = Cursors.Default;
-            //exportTemplateToolStripMenuItem.Enabled = true;
-        }
-    }
-    private async Task ExportAsWord()
-    {
-        using var sfd = new SaveFileDialog
-        {
-            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            Title = "Save statements as",
-            FileName = $"Statements_{DateTime.Now:yyyyMMdd_HHmmss}.docx",
-            DefaultExt = "docx",
-            Filter = "Word documents (*.docx)|*.docx",
-            AddExtension = true,
-            OverwritePrompt = true
-        };
-        if (sfd.ShowDialog() != DialogResult.OK) return;
-
-        if (_accounts.Count == 0)
-        {
-            MessageBox.Show("No accounts loaded.", "Generate Word",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
-        try
-        {
-            string paperSize = Properties.Settings.Default.PaperSize ?? "A4";
-            WordTemplateService.GenerateCombinedWord(sfd.FileName, _accounts.ToList(), paperSize);
-
-            lblStatus.Text = $"Generated {_accounts.Count} statement(s) in {Path.GetFileName(sfd.FileName)}";
-
-            var templatePath = WordTemplateService.ResolveTemplatePath();
-            var headerLines = SoaTemplateReader.ReadHeaders(templatePath);
-            var footerLines = SoaTemplateReader.ReadFooters(templatePath);
-
-            if (AskYesNo("Word file created. Open it now?"))
-                OpenFile(sfd.FileName);
-        }
-        catch (Exception ex)
-        {
-            ShowError("Word generation failed", ex);
-        }
     }
     private async void toolStripRightClickExportSelected_Click(object sender, EventArgs e)
     {
@@ -1402,6 +1043,396 @@ public partial class MainForm : Form
         if (t.TotalSeconds >= 1) return $"{t.TotalSeconds:0.0}s";
         return $"{t.TotalMilliseconds:0}ms";
     }
+    #endregion
+    #region IMPORT...
+    private async void toolStripButtonImportExcel_Click(object sender, EventArgs e)
+    {
+        using var ofd = new OpenFileDialog
+        {
+            Title = "Select Excel file",
+            Filter = "Excel files (*.xlsx)|*.xlsx|All files (*.*)|*.*"
+        };
+        if (ofd.ShowDialog() != DialogResult.OK) return;
+
+        toolStripButtonImportExcel.Enabled = false;
+        toolStripSplitButtonExport.Enabled = false;
+        toolStripMenuItemBlockFilter.Enabled = false;
+        //toolStripMenuItemExportSelected.Enabled = false;   // ← add this
+        //toolStripMenuItemBlockFilter.Enabled = false;
+
+        var filePath = ofd.FileName;
+        var imported = new List<CemeteryLotAccount>();   // ← LOCAL list, not _accounts
+
+        // ── Run the export with progress ──
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        bool ok = await ProgressDialog.RunAsync(this, "Importing Excel…", async progress =>
+        {
+            await Task.Run(() =>
+            {
+                progress.Report((0, "Opening workbook…"));
+
+                var temp = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+                using (var src = new FileStream(filePath, FileMode.Open, FileAccess.Read,
+                           FileShare.ReadWrite | FileShare.Delete))
+                using (var dst = File.Create(temp))
+                    src.CopyTo(dst);
+
+                using var wb = new XLWorkbook(temp);
+
+                foreach (var ws in wb.Worksheets)
+                {
+                    var sheetname = GetSheetName(ws);
+                    if (!sheetname.StartsWith("BLOCK") ||
+                        !ws.Name.TrimStart().StartsWith("BLOCK", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var used = ws.RangeUsed();
+                    if (used == null) continue;
+
+                    int firstRow = used.FirstRow().RowNumber();
+                    int lastRow = used.LastRow().RowNumber();
+
+                    for (int rowNum = firstRow; rowNum <= lastRow; rowNum++)
+                    {
+                        var row = ws.Row(rowNum);
+
+                        var idxCell = row.Cell("A");
+                        if (idxCell.IsEmpty()) continue;
+                        if (!idxCell.Value.IsNumber) continue;
+
+                        var lessee = row.Cell("B").GetString().Trim();
+                        if (string.IsNullOrWhiteSpace(lessee)) continue;
+
+                        decimal rental = ParseNum(row, "V") + ParseNum(row, "W") + ParseNum(row, "X");
+                        decimal surcharge = ParseNum(row, "Z") + ParseNum(row, "AA") + ParseNum(row, "AB");
+                        decimal interest = ParseNum(row, "AD") + ParseNum(row, "AE") + ParseNum(row, "AF");
+                        decimal total = rental + surcharge + interest;
+
+                        // ⬇ Add to the LOCAL list, not _accounts
+                        imported.Add(new CemeteryLotAccount
+                        {
+                            LesseeName = lessee,
+                            NameOfDeceased = row.Cell("C").GetString().Trim(),
+                            Address = row.Cell("D").GetString().Trim(),
+                            LotBlockNumber = sheetname,
+                            AreaSqm = row.Cell("E").GetString().Trim(),
+                            LastPayment = row.Cell("G").GetString().Trim(),
+                            DelinquentYear = row.Cell("O").GetString().Trim(),
+                            RentalOrRenewalFee = rental.ToString("0.00"),
+                            Surcharge = surcharge.ToString("0.00"),
+                            Interest = interest.ToString("0.00"),
+                            TotalAmountDue = total.ToString("0.00"),
+                        });
+                    }
+                }
+
+                progress.Report((100, "Finishing up…"));
+            });
+        }, keepOpenWhenDone: false);
+
+        sw.Stop();
+
+        // ── Back on the UI thread — now safe to touch _accounts and dgvData ──
+        _accounts.Clear();
+        foreach (var a in imported)
+            _accounts.Add(a);
+
+        _cacheCleared = false;
+
+        //PopulateBlockFilter();
+        await RebuildBlockTabsAsync();
+        UpdateBlockFilterCaption();
+        SaveAccountsToDisk();
+
+        toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;   // ← add this
+        lblStatus.Text = $"Imported {_accounts.Count} row(s) from " +
+                         $"{Path.GetFileName(filePath)}.";
+
+        if (toolStripSplitButtonExport.Enabled && toolStripSplitButtonExport.Visible)
+        {
+            toolStripMenuItemBlockFilter.Enabled = true;
+            toolStripSplitButtonExport.Select();
+        }
+
+        toolStripButtonImportExcel.Enabled = _accounts.Count > 0;
+        toolStripSplitButtonExport.Enabled = _accounts.Count > 0;
+        toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
+        //toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;
+        //toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
+
+        if (!ok)
+        {
+            lblStatus.Text = $"Export failed after {FormatElapsed(sw.Elapsed)}";
+            return;   // ← no prompt
+        }
+    }
+    private static decimal ParseNum(IXLRow row, string columnLetter)
+    {
+        try
+        {
+            var cell = row.Cell(columnLetter);
+            if (cell == null || cell.IsEmpty()) return 0m;
+
+            // Try cached numeric value first
+            if (cell.HasFormula)
+            {
+                var cached = cell.CachedValue;
+                if (!cached.IsBlank && cached.Type == XLDataType.Number)
+                    return (decimal)cached.GetNumber();
+            }
+
+            if (!cell.Value.IsBlank && cell.Value.Type == XLDataType.Number)
+                return (decimal)cell.Value.GetNumber();
+
+            // Fall back to parsing the display string
+            var s = cell.GetFormattedString()?.Trim() ?? "";
+            s = s.Replace("₱", "").Replace(",", "").Trim();
+            return decimal.TryParse(s, out var d) ? d : 0m;
+        }
+        catch
+        {
+            return 0m;
+        }
+    }
+    private static string GetCellValue(IXLRow row, string columnLetter)
+    {
+        try
+        {
+            var cell = row.Cell(columnLetter);
+            if (cell == null || cell.IsEmpty()) return string.Empty;
+
+            // Prefer cached formula result when available
+            if (cell.HasFormula)
+            {
+                var cached = cell.CachedValue;
+                if (!cached.IsBlank)
+                    return FormatCellValue(cached);
+            }
+
+            if (!cell.Value.IsBlank)
+                return FormatCellValue(cell.Value);
+
+            return cell.GetFormattedString()?.Trim() ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+    private static string FormatCellValue(XLCellValue v)
+    {
+        try
+        {
+            return v.Type switch
+            {
+                XLDataType.Number => v.GetNumber().ToString("0.00"),
+                XLDataType.DateTime => v.GetDateTime().ToString("yyyy-MM-dd"),
+                XLDataType.Boolean => v.GetBoolean().ToString(),
+                XLDataType.Text => v.GetText()?.Trim() ?? string.Empty,
+                XLDataType.Blank => string.Empty,
+                XLDataType.Error => string.Empty,
+                _ => v.ToString() ?? string.Empty,
+            };
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+    private static string GetCell(IXLRangeRow row, int col)
+    {
+        try
+        {
+            var cell = row.Cell(col);
+            if (cell == null || cell.IsEmpty()) return string.Empty;
+
+            // Preserve what the user sees (not the underlying number)
+            return cell.GetFormattedString()?.Trim() ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+    private static string GetCellByLetter(IXLRangeRow row, string columnLetter)
+    {
+        try
+        {
+            var cell = row.Cell(columnLetter);   // "U", "Y", "AC", "AH"
+            if (cell == null || cell.IsEmpty()) return string.Empty;
+            return cell.GetFormattedString()?.Trim() ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+    private static string Norm(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return string.Empty;
+        var sb = new System.Text.StringBuilder(s.Length);
+        foreach (var ch in s)
+        {
+            if (char.IsWhiteSpace(ch) || ch == '\u00A0') continue;
+            sb.Append(char.ToUpperInvariant(ch));
+        }
+        return sb.ToString();
+    }
+    private static string GetSheetName(IXLWorksheet ws)
+    {
+        var tab = ws.Name?.Trim() ?? string.Empty;
+
+        var a2 = ws.Cell("A2").GetString();
+        var cleaned = a2
+            .Replace("INVENTORY OF CEMETERY", "", StringComparison.OrdinalIgnoreCase)
+            .Replace("LOT", "", StringComparison.OrdinalIgnoreCase)
+            .Replace("\t", "").Replace("\r", "").Replace("\n", "")
+            .Trim(' ', '-', ':')
+            .Trim();
+
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return tab;
+
+        // If both reference a BLOCK/LOT number, and they differ → trust the tab
+        if (ExtractBlockLot(cleaned) is string fromTitle &&
+            ExtractBlockLot(tab) is string fromTab &&
+            !string.Equals(fromTitle, fromTab, StringComparison.OrdinalIgnoreCase))
+        {
+            return tab;
+        }
+
+        // Same as tab? honor tab (it's the reliable source)
+        if (string.Equals(cleaned, tab, StringComparison.OrdinalIgnoreCase))
+            return tab;
+
+        return cleaned;
+    }
+    private static string? ExtractBlockLot(string s)
+    {
+        // Matches "BLOCK 1", "BLK 2", "LOT 12", "BLOCK1", etc. (case-insensitive)
+        var m = System.Text.RegularExpressions.Regex.Match(
+            s, @"(BLOCK|BLK|LOT)\s*([0-9]+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return m.Success ? $"{m.Groups[1].Value.ToUpperInvariant()}{m.Groups[2].Value}" : null;
+    }
+    private static string SplitCamelCase(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return input ?? "";
+
+        // Insert a space before each capital letter that follows a lowercase letter or digit
+        var spaced = System.Text.RegularExpressions.Regex.Replace(
+            input,
+            @"(?<=[a-z0-9])([A-Z])",
+            " $1");
+
+        // Also handle digits glued to letters: "AreaSqm2" → "Area Sqm 2"
+        spaced = System.Text.RegularExpressions.Regex.Replace(
+            spaced,
+            @"(?<=[A-Za-z])(\d)",
+            " $1");
+
+        return spaced.Trim();
+    }
+    #endregion
+    #region EXPORT...
+    private void btnCreateTemplate_Click(object sender, EventArgs e)
+    {
+        ExportDocxTemplate();
+    }
+    private void ExportDocxTemplate()
+    {
+        using var sfd = new SaveFileDialog
+        {
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Title = "Save blank template as",
+            FileName = WordTemplateService.TemplateFileName,
+            DefaultExt = "docx",
+            Filter = "Word documents (*.docx)|*.docx|All files (*.*)|*.*",
+            AddExtension = true,
+            OverwritePrompt = true
+        };
+
+        if (sfd.ShowDialog() != DialogResult.OK) return;
+
+        //exportTemplateToolStripMenuItem.Enabled = false;
+        Cursor = Cursors.WaitCursor;
+        try
+        {
+            WordTemplateService.CreateTemplate(sfd.FileName);
+
+            lblStatus.Text = $"Blank template saved: {Path.GetFileName(sfd.FileName)}";
+
+            if (AskYesNo(
+                "Blank template saved.\n\n" +
+                "You can now edit it in Word. If you want the app to use your edited " +
+                "version next time, replace this file:\n\n" +
+                $"  {WordTemplateService.ResolveTemplatePath()}"))
+            {
+                OpenFile(sfd.FileName);
+            }
+        }
+        catch (IOException ioEx)
+        {
+            MessageBox.Show(
+                "The destination file is open in another program (likely Word).\n" +
+                "Close it and try again.\n\n" +
+                $"Details: {ioEx.Message}",
+                "Template creation failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            ShowError("Template creation failed", ex);
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+            //exportTemplateToolStripMenuItem.Enabled = true;
+        }
+    }
+    private async Task ExportAsWord()
+    {
+        using var sfd = new SaveFileDialog
+        {
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Title = "Save statements as",
+            FileName = $"Statements_{DateTime.Now:yyyyMMdd_HHmmss}.docx",
+            DefaultExt = "docx",
+            Filter = "Word documents (*.docx)|*.docx",
+            AddExtension = true,
+            OverwritePrompt = true
+        };
+        if (sfd.ShowDialog() != DialogResult.OK) return;
+
+        if (_accounts.Count == 0)
+        {
+            MessageBox.Show("No accounts loaded.", "Generate Word",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        try
+        {
+            string paperSize = Properties.Settings.Default.PaperSize ?? "A4";
+            WordTemplateService.GenerateCombinedWord(sfd.FileName, _accounts.ToList(), paperSize);
+
+            lblStatus.Text = $"Generated {_accounts.Count} statement(s) in {Path.GetFileName(sfd.FileName)}";
+
+            var templatePath = WordTemplateService.ResolveTemplatePath();
+            var headerLines = SoaTemplateReader.ReadHeaders(templatePath);
+            var footerLines = SoaTemplateReader.ReadFooters(templatePath);
+
+            if (AskYesNo("Word file created. Open it now?"))
+                OpenFile(sfd.FileName);
+        }
+        catch (Exception ex)
+        {
+            ShowError("Word generation failed", ex);
+        }
+    }
+    #endregion
 
     private void CreatePdfPerBlock(string path, string paperSize, bool skipZero, IEnumerable<CemeteryLotAccount> accounts)
     {
@@ -1506,6 +1537,8 @@ public partial class MainForm : Form
                                 InfoLine(inf, "Block / Lot No.: ", a.LotBlockNumber);
                                 InfoLine(inf, "Area / Sukat: ", a.AreaSqm + " sq. m.");
                                 InfoLine(inf, "Name of Deceased: ", a.NameOfDeceased);
+                                inf.Item().PaddingTop(12);
+                                InfoLine(inf, "Last payment: ", a.LastPayment);
                             });
                         });
 
@@ -1522,9 +1555,19 @@ public partial class MainForm : Form
                             txt.Span("Navotas City Public Cemetery:").FontSize(9).Bold();
                         });
 
+                        // Info block
+                        col.Item().Row(row =>
+                        {
+                            row.RelativeItem().Column(inf =>
+                            {
+                                inf.Item().PaddingTop(12);
+                                InfoLine(inf, "Delinquent Year: ", a.DelinquentYear);
+                            });
+                        });
+
                         // Charges table
                         col.Item()
-                           .PaddingTop(12)
+                           .PaddingTop(10)
                            .AlignCenter()
                            .Width(300)
                            .Table(table =>
@@ -1620,7 +1663,7 @@ public partial class MainForm : Form
                         });
 
                         // Signature block
-                        col.Item().PaddingTop(24).Text("Very truly yours,").FontSize(9);
+                        col.Item().PaddingTop(15).Text("Very truly yours,").FontSize(9);
                         col.Item().PaddingTop(30).Text("ALMA D. BUCALEN, CPA, MPA").FontSize(9).Bold();
                         col.Item().Text("Acting City Treasurer").FontSize(9);
                     });
@@ -1664,7 +1707,6 @@ public partial class MainForm : Form
             System.Globalization.CultureInfo.InvariantCulture,
             out var n) && n == 0m;
     }
-
     private static void InfoLine(ColumnDescriptor col, string label, string value)
     {
         // Recognize "<number> <unit>" and separate them
@@ -1682,7 +1724,7 @@ public partial class MainForm : Form
 
         col.Item().Text(txt =>
         {
-            txt.Span(label).FontSize(10).SemiBold();
+            txt.Span(label).FontSize(10).Bold();
             txt.Span(mainValue).FontSize(10).Underline();
 
             if (!string.IsNullOrEmpty(unit))
@@ -1727,7 +1769,7 @@ public partial class MainForm : Form
 
     }
 
-    private void OpenSettings()
+    private async void OpenSettings()
     {
         var isWordExportEnabled = Properties.Settings.Default.EnableWordExport;
         var skipZeroTotal = Properties.Settings.Default.SkipZeroTotal;
@@ -1755,7 +1797,7 @@ public partial class MainForm : Form
         toolStripSplitButtonExport.Image = bmp;
 
         if (skipZeroTotal != dlg.SkipZeroTotal)
-            RebuildBlockTabsAsync();
+            await RebuildBlockTabsAsync();
 
         //fileToolStripMenuItem.Enabled = !isPdf;
     }
@@ -1810,10 +1852,10 @@ public partial class MainForm : Form
         _blockPopup.LoadBlocks(blocksWithCounts, preChecked);
         _blockPopup.ShowUnder(toolStripMenuItemBlockFilter);
     }
-    private void OnBlockFilterVisibilityChanged(object? sender, EventArgs e)
+    private async void OnBlockFilterVisibilityChanged(object? sender, EventArgs e)
     {
         if (_blockPopup != null && !_blockPopup.Visible)
-            RebuildBlockTabsAsync();
+            await RebuildBlockTabsAsync();
     }
     private void OnBlockSelectionChanged(HashSet<string> selected)
     {
@@ -1911,7 +1953,7 @@ public partial class MainForm : Form
         var json = System.Text.Json.JsonSerializer.Serialize(_accounts.ToList(), options);
         File.WriteAllText(path, json);
     }
-    public void ClearCachedRecords()
+    public async void ClearCachedRecords()
     {
         _accounts.Clear();
         _selectedBlocks.Clear();
@@ -1919,7 +1961,7 @@ public partial class MainForm : Form
 
         _cacheCleared = true;
 
-        RebuildBlockTabsAsync();
+        await RebuildBlockTabsAsync();
         UpdateBlockFilterCaption();
         CacheClearedUI();
     }
@@ -1972,7 +2014,7 @@ public partial class MainForm : Form
 
         _cacheCleared = false;
 
-        RebuildBlockTabsAsync();
+        await RebuildBlockTabsAsync();
         _selectedBlocks.Clear();
         UpdateBlockFilterCaption();
 
@@ -2033,15 +2075,15 @@ public partial class MainForm : Form
         //    e.SuppressKeyPress = true;
         //    e.Handled = true;
 
-        //    _ = RebuildBlockTabsAsync();
+        //    await RebuildBlockTabsAsync();
         //}
     }
-    private void toolStripTextBoxSearch_TextChanged(object sender, EventArgs e)
+    private async void toolStripTextBoxSearch_TextChanged(object sender, EventArgs e)
     {
         string searchTerm = toolStripTextBoxSearch.Text.Trim();
 
         // Enable/disable the clear button based on if there is text
-        toolStripButtonClear.Enabled = !string.IsNullOrEmpty(searchTerm);
+        toolStripButtonClear.Enabled = !string.IsNullOrEmpty(searchTerm) && searchTerm != "Search Lessee, Deceased, Address…";
 
         // 👇 If it's less than 3 characters, stop the timer and DO NOT search.
         if (searchTerm.Length > 0 && searchTerm.Length < 3)
@@ -2057,7 +2099,7 @@ public partial class MainForm : Form
             if (_lastSearchTerm != string.Empty)
             {
                 _lastSearchTerm = string.Empty;
-                _ = RebuildBlockTabsAsync(); // Reset to show all
+                await RebuildBlockTabsAsync(); // Reset to show all
             }
             return;
         }
@@ -2066,7 +2108,7 @@ public partial class MainForm : Form
         _searchDebounceTimer.Stop();
         _searchDebounceTimer.Start();
     }
-    private void SearchDebounceTimer_Tick(object sender, EventArgs e)
+    private async void SearchDebounceTimer_Tick(object sender, EventArgs e)
     {
         _searchDebounceTimer.Stop();
 
@@ -2075,7 +2117,7 @@ public partial class MainForm : Form
         if (currentSearchTerm != _lastSearchTerm)
         {
             _lastSearchTerm = currentSearchTerm;
-            _ = RebuildBlockTabsAsync();
+            await RebuildBlockTabsAsync();
         }
     }
 

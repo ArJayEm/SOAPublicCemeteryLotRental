@@ -1,10 +1,15 @@
-Version 1.0.8.1 (October 24, 2026)
+Version 1.0.8.2 (October 22, 2026)
+--------------------------------------
+UPDATES:
+- Last Payment & Delinquent Year fields
+
+Version 1.0.8.1 (October 20, 2026)
 --------------------------------------
 IMPROVEMENTS:
 - Added app icon.
 - Open bug, fixes, and improvements url.
 
-Version 1.0.8.37337 (October 24, 2026)
+Version 1.0.8.37337 (October 19, 2026)
 --------------------------------------
 BUG FIXES:
 - Check for Updates function.

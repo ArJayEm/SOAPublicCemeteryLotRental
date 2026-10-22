@@ -182,6 +182,7 @@
             MaximizeBox = false;
             MinimizeBox = false;
             Name = "SettingsForm";
+            ShowInTaskbar = false;
             StartPosition = FormStartPosition.CenterParent;
             groupBox1.ResumeLayout(false);
             groupBox1.PerformLayout();

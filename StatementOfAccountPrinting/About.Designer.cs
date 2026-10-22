@@ -153,6 +153,7 @@
             Controls.Add(groupBox1);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             Name = "About";
+            ShowInTaskbar = false;
             StartPosition = FormStartPosition.CenterParent;
             groupBox1.ResumeLayout(false);
             groupBox1.PerformLayout();
