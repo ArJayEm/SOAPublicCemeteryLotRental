@@ -48,4 +48,11 @@ public class CemeteryLotAccount
         [nameof(CemeteryLotAccount.Interest)] = "Interest",
         [nameof(CemeteryLotAccount.TotalAmountDue)] = "Total Amount Due",
     };
+    public class ToolStripComboBoxItem
+    {
+        public string Display { get; }
+        public string Key { get; }
+        public ToolStripComboBoxItem(string display, string key) { Display = display; Key = key; }
+        public override string ToString() => Display;
+    }
 }

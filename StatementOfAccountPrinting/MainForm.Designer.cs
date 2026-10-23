@@ -25,6 +25,8 @@ partial class MainForm
         settingsToolStripMenuItem = new ToolStripMenuItem();
         helpToolStripMenuItem = new ToolStripMenuItem();
         checkForUpdatesToolStripMenuItem = new ToolStripMenuItem();
+        whatsNewToolStripMenuItem = new ToolStripMenuItem();
+        toolStripSeparator3 = new ToolStripSeparator();
         toolStripSeparator1 = new ToolStripSeparator();
         aboutToolStripMenuItem = new ToolStripMenuItem();
         toolStrip1 = new ToolStrip();
@@ -32,10 +34,12 @@ partial class MainForm
         toolStripMenuItemExportSelected = new ToolStripMenuItem();
         exportAllskip000TotalAmountDueToolStripMenuItem = new ToolStripMenuItem();
         exportAllonly000TotalAmountDueToolStripMenuItem = new ToolStripMenuItem();
+        exportSearchResultsToolStripMenuItem = new ToolStripMenuItem();
         toolStripButtonImportExcel = new ToolStripButton();
         toolStripMenuItemBlockFilter = new ToolStripButton();
         toolStripTextBoxSearch = new ToolStripTextBox();
         toolStripButtonClear = new ToolStripButton();
+        toolStripComboBoxSearchColumn = new ToolStripComboBox();
         tabPage2 = new TabPage();
         tabPage1 = new TabPage();
         tabBlocks = new TabControl();
@@ -49,7 +53,7 @@ partial class MainForm
         lblStatus.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         lblStatus.Location = new Point(12, 347);
         lblStatus.Name = "lblStatus";
-        lblStatus.Size = new Size(721, 19);
+        lblStatus.Size = new Size(805, 19);
         lblStatus.TabIndex = 5;
         lblStatus.Text = "Ready. Import an .xlsx file to begin.";
         // 
@@ -59,7 +63,7 @@ partial class MainForm
         menuStrip1.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem, settingsToolStripMenuItem, helpToolStripMenuItem });
         menuStrip1.Location = new Point(0, 0);
         menuStrip1.Name = "menuStrip1";
-        menuStrip1.Size = new Size(765, 29);
+        menuStrip1.Size = new Size(849, 29);
         menuStrip1.TabIndex = 8;
         menuStrip1.Text = "menuStrip1";
         // 
@@ -110,7 +114,7 @@ partial class MainForm
         // 
         // helpToolStripMenuItem
         // 
-        helpToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { checkForUpdatesToolStripMenuItem, toolStripSeparator1, aboutToolStripMenuItem });
+        helpToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { checkForUpdatesToolStripMenuItem, whatsNewToolStripMenuItem, toolStripSeparator3, toolStripSeparator1, aboutToolStripMenuItem });
         helpToolStripMenuItem.Name = "helpToolStripMenuItem";
         helpToolStripMenuItem.ShortcutKeys = Keys.Alt | Keys.H;
         helpToolStripMenuItem.Size = new Size(54, 25);
@@ -123,6 +127,18 @@ partial class MainForm
         checkForUpdatesToolStripMenuItem.Size = new Size(261, 26);
         checkForUpdatesToolStripMenuItem.Text = "Check For Updates";
         checkForUpdatesToolStripMenuItem.Click += checkForUpdatesToolStripMenuItem_Click;
+        // 
+        // whatsNewToolStripMenuItem
+        // 
+        whatsNewToolStripMenuItem.Name = "whatsNewToolStripMenuItem";
+        whatsNewToolStripMenuItem.Size = new Size(261, 26);
+        whatsNewToolStripMenuItem.Text = "What's New?";
+        whatsNewToolStripMenuItem.Click += whatsNewToolStripMenuItem_Click;
+        // 
+        // toolStripSeparator3
+        // 
+        toolStripSeparator3.Name = "toolStripSeparator3";
+        toolStripSeparator3.Size = new Size(258, 6);
         // 
         // toolStripSeparator1
         // 
@@ -140,11 +156,11 @@ partial class MainForm
         // toolStrip1
         // 
         toolStrip1.Font = new Font("Segoe UI", 12F);
-        toolStrip1.Items.AddRange(new ToolStripItem[] { toolStripSplitButtonExport, toolStripButtonImportExcel, toolStripMenuItemBlockFilter, toolStripTextBoxSearch, toolStripButtonClear });
+        toolStrip1.Items.AddRange(new ToolStripItem[] { toolStripSplitButtonExport, toolStripButtonImportExcel, toolStripMenuItemBlockFilter, toolStripTextBoxSearch, toolStripButtonClear, toolStripComboBoxSearchColumn });
         toolStrip1.Location = new Point(0, 29);
         toolStrip1.Name = "toolStrip1";
         toolStrip1.Padding = new Padding(10, 0, 10, 0);
-        toolStrip1.Size = new Size(765, 28);
+        toolStrip1.Size = new Size(849, 28);
         toolStrip1.TabIndex = 15;
         toolStrip1.Text = "toolStrip1";
         // 
@@ -152,7 +168,7 @@ partial class MainForm
         // 
         toolStripSplitButtonExport.Alignment = ToolStripItemAlignment.Right;
         toolStripSplitButtonExport.DropDownButtonWidth = 15;
-        toolStripSplitButtonExport.DropDownItems.AddRange(new ToolStripItem[] { toolStripMenuItemExportSelected, exportAllskip000TotalAmountDueToolStripMenuItem, exportAllonly000TotalAmountDueToolStripMenuItem });
+        toolStripSplitButtonExport.DropDownItems.AddRange(new ToolStripItem[] { toolStripMenuItemExportSelected, exportAllskip000TotalAmountDueToolStripMenuItem, exportAllonly000TotalAmountDueToolStripMenuItem, exportSearchResultsToolStripMenuItem });
         toolStripSplitButtonExport.Font = new Font("Segoe UI", 12F);
         toolStripSplitButtonExport.Image = Properties.Resources.pdf;
         toolStripSplitButtonExport.ImageTransparentColor = Color.Magenta;
@@ -184,6 +200,13 @@ partial class MainForm
         exportAllonly000TotalAmountDueToolStripMenuItem.Visible = false;
         exportAllonly000TotalAmountDueToolStripMenuItem.Click += exportAllonly000TotalAmountDueToolStripMenuItem_Click;
         // 
+        // exportSearchResultsToolStripMenuItem
+        // 
+        exportSearchResultsToolStripMenuItem.Name = "exportSearchResultsToolStripMenuItem";
+        exportSearchResultsToolStripMenuItem.Size = new Size(361, 26);
+        exportSearchResultsToolStripMenuItem.Text = "Export Search Results";
+        exportSearchResultsToolStripMenuItem.Click += exportSearchResultsToolStripMenuItem_Click;
+        // 
         // toolStripButtonImportExcel
         // 
         toolStripButtonImportExcel.Image = (Image)resources.GetObject("toolStripButtonImportExcel.Image");
@@ -213,7 +236,6 @@ partial class MainForm
         toolStripTextBoxSearch.Visible = false;
         toolStripTextBoxSearch.Enter += toolStripTextBoxSearch_Enter;
         toolStripTextBoxSearch.Leave += toolStripTextBoxSearch_Leave;
-        toolStripTextBoxSearch.KeyDown += toolStripTextBoxSearch_KeyDown;
         toolStripTextBoxSearch.TextChanged += toolStripTextBoxSearch_TextChanged;
         // 
         // toolStripButtonClear
@@ -227,12 +249,18 @@ partial class MainForm
         toolStripButtonClear.Visible = false;
         toolStripButtonClear.Click += toolStripButtonClear_Click;
         // 
+        // toolStripComboBoxSearchColumn
+        // 
+        toolStripComboBoxSearchColumn.Name = "toolStripComboBoxSearchColumn";
+        toolStripComboBoxSearchColumn.Size = new Size(121, 28);
+        toolStripComboBoxSearchColumn.SelectedIndexChanged += toolStripComboBoxSearchColumn_SelectedIndexChanged;
+        // 
         // tabPage2
         // 
         tabPage2.Location = new Point(4, 26);
         tabPage2.Name = "tabPage2";
         tabPage2.Padding = new Padding(3);
-        tabPage2.Size = new Size(734, 254);
+        tabPage2.Size = new Size(818, 254);
         tabPage2.TabIndex = 1;
         tabPage2.Text = "tabPage2";
         tabPage2.UseVisualStyleBackColor = true;
@@ -242,7 +270,7 @@ partial class MainForm
         tabPage1.Location = new Point(4, 26);
         tabPage1.Name = "tabPage1";
         tabPage1.Padding = new Padding(3);
-        tabPage1.Size = new Size(734, 254);
+        tabPage1.Size = new Size(818, 254);
         tabPage1.TabIndex = 0;
         tabPage1.Text = "tabPage1";
         tabPage1.UseVisualStyleBackColor = true;
@@ -256,14 +284,14 @@ partial class MainForm
         tabBlocks.Location = new Point(12, 60);
         tabBlocks.Name = "tabBlocks";
         tabBlocks.SelectedIndex = 0;
-        tabBlocks.Size = new Size(742, 284);
+        tabBlocks.Size = new Size(826, 284);
         tabBlocks.TabIndex = 9;
         // 
         // MainForm
         // 
         AutoScaleDimensions = new SizeF(7F, 15F);
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(765, 375);
+        ClientSize = new Size(849, 375);
         Controls.Add(toolStrip1);
         Controls.Add(tabBlocks);
         Controls.Add(lblStatus);
@@ -312,4 +340,8 @@ partial class MainForm
     private ToolStripMenuItem aboutToolStripMenuItem;
     private ToolStripTextBox toolStripTextBoxSearch;
     private ToolStripButton toolStripButtonClear;
+    private ToolStripMenuItem exportSearchResultsToolStripMenuItem;
+    private ToolStripMenuItem whatsNewToolStripMenuItem;
+    private ToolStripSeparator toolStripSeparator3;
+    private ToolStripComboBox toolStripComboBoxSearchColumn;
 }

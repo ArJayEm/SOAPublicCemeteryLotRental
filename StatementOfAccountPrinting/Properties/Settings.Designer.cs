@@ -70,5 +70,29 @@ namespace StatementOfAccountPrinting.Properties {
                 this["EnableWordExport"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string LastOutputFolder {
+            get {
+                return ((string)(this["LastOutputFolder"]));
+            }
+            set {
+                this["LastOutputFolder"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string LastImportedFileName {
+            get {
+                return ((string)(this["LastImportedFileName"]));
+            }
+            set {
+                this["LastImportedFileName"] = value;
+            }
+        }
     }
 }

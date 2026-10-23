@@ -8,7 +8,7 @@ using System.ComponentModel;
 using System.Configuration;
 using System.Diagnostics;
 using System.Reflection;
-using DrawingColor = System.Drawing.Color;
+using static StatementOfAccountPrinting.CemeteryLotAccount;
 using DrawingSize = System.Drawing.Size;
 
 namespace StatementOfAccountPrinting;
@@ -16,16 +16,39 @@ namespace StatementOfAccountPrinting;
 public partial class MainForm : Form
 {
     private readonly BindingList<CemeteryLotAccount> _accounts = new();
+    private BindingList<CemeteryLotAccount> _filteredAccounts = new();
     private readonly HashSet<string> _selectedBlocks = new(StringComparer.OrdinalIgnoreCase);
     private bool _blockFilterInitialized;
     private bool _isUpdating = false;
     private BlockFilterPopup? _blockPopup;
     private System.Windows.Forms.Timer _searchDebounceTimer;
-    private string _lastSearchTerm = string.Empty;
-    private string _currentHighlightTerm = string.Empty;
     private bool _cacheCleared = false;
+    #region SEARCH...
     private const string SearchHint = "Search Lessee, Deceased, Address…";
     private bool _searchHintActive;
+    private string _searchTerm { get { return toolStripTextBoxSearch.Text.Trim(); } }
+    private string _searchColumnKey
+    {
+        get
+        {
+            if (toolStripComboBoxSearchColumn.SelectedItem is ToolStripComboBoxItem item)
+                return item.Key;
+            return "LesseeName"; // Default
+        }
+    }
+    private bool _isSearching { get { return !string.IsNullOrWhiteSpace(_searchTerm) && _searchTerm != SearchHint; } }
+    private string _lastSearchTerm = string.Empty;
+    private string _currentHighlightTerm = string.Empty;
+    #endregion
+    #region DEFAULT SETTINGS...
+    private bool _skipZeroTotal { get { return Properties.Settings.Default.SkipZeroTotal; } }
+    private bool _isWordExportEnabled { get { return Properties.Settings.Default.EnableWordExport; } }
+    private string _exportFormat { get { return Properties.Settings.Default.ExportFormat ?? "PDF"; } }
+    private string _paperSize { get { return Properties.Settings.Default.PaperSize ?? "A4"; } }
+    private string _lastOutputFolder { get { return Properties.Settings.Default.LastOutputFolder; } }
+    private string _lastImportedFileName = string.Empty;
+    private string _lastFolder = string.Empty;
+    #endregion
     private readonly bool IsDevelopment =
 #if DEBUG
         true;
@@ -44,6 +67,9 @@ public partial class MainForm : Form
 
         LoadUIFromSettings();
         QuestPDF.Settings.License = LicenseType.Community;
+
+        InitSearchPlaceholder();
+        LoadSearchFilterItems();
     }
     #region FIRST LOAD...
     private async void MainForm_Shown(object sender, EventArgs e)
@@ -117,19 +143,20 @@ public partial class MainForm : Form
 
         RegisterFonts();
 
-        var isWordExportEnabled = Properties.Settings.Default.EnableWordExport;
-        var savedFormat = !isWordExportEnabled ? "PDF" : Properties.Settings.Default.ExportFormat;
+        var savedFormat = !_isWordExportEnabled ? "PDF" : _exportFormat;
         toolStripSplitButtonExport.Text = $"Export All as {savedFormat}";
         bool isPdf = savedFormat == "PDF";
         Bitmap bmp = isPdf ? Properties.Resources.pdf : Properties.Resources.doc;
         toolStripSplitButtonExport.Image = bmp;
         //fileToolStripMenuItem.Enabled = !isPdf;
 
-        importTemplateToolStripMenuItem.Visible = isWordExportEnabled;
-        exportTemplateToolStripMenuItem.Visible = isWordExportEnabled;
-        toolStripSeparator1.Visible = isWordExportEnabled;
+        importTemplateToolStripMenuItem.Visible = _isWordExportEnabled;
+        exportTemplateToolStripMenuItem.Visible = _isWordExportEnabled;
+        toolStripSeparator1.Visible = _isWordExportEnabled;
 
         string devSetting = ConfigurationManager.AppSettings["IsDevelopment"];
+        _lastFolder = Properties.Settings.Default.LastOutputFolder;
+        _lastImportedFileName = Properties.Settings.Default.LastImportedFileName;
         //var IsDevelopment = bool.TryParse(devSetting, out bool result) && result;
 
         //checkForUpdatesToolStripMenuItem.Visible = IsDevelopment;
@@ -185,6 +212,22 @@ public partial class MainForm : Form
             toolStripTextBoxSearch.ForeColor = SystemColors.GrayText;
             toolStripTextBoxSearch.Text = SearchHint;
         }
+    }
+    private void LoadSearchFilterItems()
+    {
+        // Take the first 4 items from the dictionary
+        var searchableColumns = CemeteryLotAccount.ColumnHeaders.Take(4)
+            //.OrderBy(kvp => kvp.Value)
+            .ToList();
+
+        toolStripComboBoxSearchColumn.Items.Clear();
+        foreach (var kvp in searchableColumns)
+        {
+            // We store the Key (property name) in the Tag, but display the Value (friendly name)
+            toolStripComboBoxSearchColumn.Items.Add(new ToolStripComboBoxItem(kvp.Value, kvp.Key));
+        }
+
+        toolStripComboBoxSearchColumn.SelectedIndex = 0;
     }
     #endregion
     #region UPDATES...
@@ -443,65 +486,54 @@ public partial class MainForm : Form
     }
     #endregion
     #region DATAGRIDVIEW...
-    private void Grid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
-    {
-        // If not searching, do nothing
-        if (string.IsNullOrWhiteSpace(_currentHighlightTerm) || e.Value == null)
-            return;
-
-        string cellText = e.Value.ToString();
-
-        // Check if the cell contains the search term (case-insensitive)
-        if (cellText.Contains(_currentHighlightTerm, StringComparison.OrdinalIgnoreCase))
-        {
-            // Highlight the background (e.g., Yellow) and text (e.g., Black)
-            e.CellStyle.BackColor = DrawingColor.Yellow;
-            e.CellStyle.ForeColor = DrawingColor.Black;
-            e.CellStyle.SelectionBackColor = DrawingColor.Gold; // So it stays highlighted when clicked
-        }
-    }
     private void Grid_CellPainting(object sender, DataGridViewCellPaintingEventArgs e)
     {
-        // 1. Only paint if we are searching, and it's a data cell (not header)
-        if (string.IsNullOrWhiteSpace(_currentHighlightTerm) || e.RowIndex < 0 || e.Value == null)
+        var grid = (DataGridView)sender;
+        string searchTerm = grid.Tag as string;
+
+        // 1. Make sure we have a search term and we are in a data cell
+        if (string.IsNullOrWhiteSpace(searchTerm) || e.RowIndex < 0 || e.Value == null)
+            return;
+
+        // 2. Check if this cell belongs to the column we are searching in
+        var column = grid.Columns[e.ColumnIndex];
+        string colName = column.Name; // The property name (e.g., "LesseeName")
+
+        // If the user is searching a specific column, but this isn't it, skip painting
+        if (!string.IsNullOrEmpty(_searchColumnKey) && !colName.Equals(_searchColumnKey, StringComparison.OrdinalIgnoreCase))
             return;
 
         string cellText = e.Value.ToString();
-        int matchIndex = cellText.IndexOf(_currentHighlightTerm, StringComparison.OrdinalIgnoreCase);
+        int matchIndex = cellText.IndexOf(searchTerm, StringComparison.OrdinalIgnoreCase);
 
-        // If no match, let the grid paint it normally
         if (matchIndex < 0)
             return;
 
-        // 2. Paint the background, borders, and selection normally
+        // 3. Paint background, borders, and selection
         e.Paint(e.ClipBounds, DataGridViewPaintParts.All & ~DataGridViewPaintParts.ContentForeground);
 
-        // 3. Safely get the font
-        var font = e.CellStyle.Font ?? ((DataGridView)sender).Font;
-        var grid = (DataGridView)sender;
+        var font = e.CellStyle.Font ?? grid.Font;
 
-        // 4. Get the text color (respect selection)
         System.Drawing.Color textColor = e.CellStyle.ForeColor;
         if ((e.State & DataGridViewElementStates.Selected) != 0)
         {
             textColor = e.CellStyle.SelectionForeColor;
         }
 
-        // 5. Extract the pieces
         string beforeMatch = cellText.Substring(0, matchIndex);
-        string match = cellText.Substring(matchIndex, _currentHighlightTerm.Length);
-        string afterMatch = cellText.Substring(matchIndex + _currentHighlightTerm.Length);
+        string match = cellText.Substring(matchIndex, searchTerm.Length);
+        string afterMatch = cellText.Substring(matchIndex + searchTerm.Length);
 
-        // 6. Calculate exact sizes using TextRenderer (much more accurate than MeasureString)
-        DrawingSize sizeBefore = TextRenderer.MeasureText(beforeMatch, font);
-        DrawingSize sizeMatch = TextRenderer.MeasureText(match, font);
-        DrawingSize sizeAfter = TextRenderer.MeasureText(afterMatch, font);
+        // 4. Measure text widths
+        DrawingSize sizeBefore = TextRenderer.MeasureText(beforeMatch, font, DrawingSize.Empty, TextFormatFlags.NoPadding);
+        DrawingSize sizeMatch = TextRenderer.MeasureText(match, font, DrawingSize.Empty, TextFormatFlags.NoPadding);
+        DrawingSize sizeAfter = TextRenderer.MeasureText(afterMatch, font, DrawingSize.Empty, TextFormatFlags.NoPadding);
 
-        // 7. Determine exact X and Y coordinates based on cell padding
-        int x = e.CellBounds.X + e.CellStyle.Padding.Left;
+        // 5. Determine X and Y (using 2px for standard grid margin)
+        int x = e.CellBounds.X + 2;
         int y = e.CellBounds.Y + e.CellStyle.Padding.Top;
 
-        // 8. Draw "before" part
+        // Draw "before" part
         if (beforeMatch.Length > 0)
         {
             TextRenderer.DrawText(e.Graphics, beforeMatch, font,
@@ -509,11 +541,13 @@ public partial class MainForm : Form
             x += sizeBefore.Width;
         }
 
-        // 9. Draw highlighted "match" part (NO extra padding here)
+        // Draw highlighted "match" part
         if (match.Length > 0)
         {
-            // Draw yellow background exactly behind the text
-            e.Graphics.FillRectangle(Brushes.Yellow, x, y, sizeMatch.Width, e.CellBounds.Height - e.CellStyle.Padding.Vertical);
+            int highlightHeight = font.Height;
+
+            // Draw yellow background
+            e.Graphics.FillRectangle(Brushes.Yellow, x, y, sizeMatch.Width, highlightHeight);
 
             // Draw black text on top
             TextRenderer.DrawText(e.Graphics, match, font,
@@ -522,46 +556,51 @@ public partial class MainForm : Form
             x += sizeMatch.Width;
         }
 
-        // 10. Draw "after" part
+        // Draw "after" part
         if (afterMatch.Length > 0)
         {
             TextRenderer.DrawText(e.Graphics, afterMatch, font,
                 new Point(x, y), textColor, TextFormatFlags.NoPadding);
         }
 
-        // 11. Tell the grid we handled the painting
         e.Handled = true;
     }
     private async Task RebuildBlockTabsAsync()
     {
         if (_accounts.Count == 0) return;
 
-        string searchTerm = toolStripTextBoxSearch.Text.Trim();
-        bool isSearching = !string.IsNullOrWhiteSpace(searchTerm);
-        _currentHighlightTerm = searchTerm;
-
         // 1. Filter the accounts
-        var filteredAccounts = _accounts.AsEnumerable();
+        var filteredData = _accounts.AsEnumerable();
 
-        if (!string.IsNullOrWhiteSpace(searchTerm))
+        if (_isSearching)
         {
-            filteredAccounts = filteredAccounts.Where(a =>
-                (a.LesseeName != null && a.LesseeName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
-                (a.NameOfDeceased != null && a.NameOfDeceased.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
-                (a.Address != null && a.Address.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
-                (a.LotBlockNumber != null && a.LotBlockNumber.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
-            // Add any other fields you want to search here
-            );
+            filteredData = filteredData.Where(a =>
+            {
+                // Use reflection to get the value of the selected column
+                var propInfo = typeof(CemeteryLotAccount).GetProperty(_searchColumnKey);
+                if (propInfo == null) return false;
+
+                var val = propInfo.GetValue(a)?.ToString();
+                return val != null && val.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase);
+            });
+
+            //filteredData = filteredData.Where(a =>
+            //    (a.LesseeName != null && a.LesseeName.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+            //    (a.NameOfDeceased != null && a.NameOfDeceased.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+            //    (a.Address != null && a.Address.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+            //    (a.LotBlockNumber != null && a.LotBlockNumber.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase))
+            //// Add any other fields you want to search here
+            //);
         }
 
-        bool skipZero = Properties.Settings.Default.SkipZeroTotal;
+        _filteredAccounts = new BindingList<CemeteryLotAccount>(filteredData.ToList());
 
         // Group first — cheap, can happen on UI thread
-        var groups = filteredAccounts
-            .Where(a => !skipZero || !IsZeroTotal(a.TotalAmountDue))
+        var groups = filteredData
+            .Where(a => !_skipZeroTotal || !IsZeroTotal(a.TotalAmountDue))
             .GroupBy(a =>
                 // 👇 If searching, put everything in one "Search Results" group
-                isSearching ? "Search Results" :
+                _isSearching ? "Search Results" :
                 (string.IsNullOrWhiteSpace(a.LotBlockNumber) ? "(No Block)" : a.LotBlockNumber.Trim())
             )
             .OrderBy(g => ExtractBlockNumber(g.Key))
@@ -615,10 +654,12 @@ public partial class MainForm : Form
                         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells,
                         SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                         MultiSelect = true,
-                        DataSource = blockList
+                        DataSource = blockList,
+                        Tag = _isSearching ? _searchTerm : null
                     };
 
-                    //grid.CellFormatting += Grid_CellFormatting;
+                    // 👇 Wire up the click event
+                    grid.ColumnHeaderMouseClick += Grid_ColumnHeaderMouseClick;
                     grid.CellPainting += Grid_CellPainting;
 
                     // ✅ Friendly headers as columns are auto-generated
@@ -692,7 +733,17 @@ public partial class MainForm : Form
             });
         }, keepOpenWhenDone: false);
 
+        int exportableCount = groups.Sum(g => g.Count());
+
+        // 👇 Update the text so it reflects the true export amount
+        exportSearchResultsToolStripMenuItem.Text = $"Export Search Results ({exportableCount})";
+
+        // 👇 Make it visible only if we are actively searching
+        exportSearchResultsToolStripMenuItem.Visible = _isSearching;
+
+        UpdateBlockFilterCaption();
         Task.Delay(100);
+
         RestoreTabsUI();
     }
     private void TabBlocks_SelectedIndexChanged(object? sender, EventArgs e)
@@ -751,13 +802,8 @@ public partial class MainForm : Form
                 return;
             }
 
-            // ── Read settings once ──
-            string paperSize = Properties.Settings.Default.PaperSize ?? "A4";
-            bool skipZero = Properties.Settings.Default.SkipZeroTotal;
-            string exportFormat = Properties.Settings.Default.ExportFormat ?? "PDF";
-
             // Apply skip-zero filter if enabled
-            if (skipZero)
+            if (_skipZeroTotal)
                 selected = selected.Where(a => !IsZeroTotal(a.TotalAmountDue)).ToList();
 
             if (selected.Count == 0)
@@ -767,30 +813,59 @@ public partial class MainForm : Form
                 return;
             }
 
-            // ── Ask for an output folder ──
-            using var fbd = new FolderBrowserDialog
+            // ── Generate the suggested filename first ──
+            string fileBase;
+            if (selected.Count == 1)
             {
-                Description = "Choose output folder for selected record(s)"
-            };
-            if (fbd.ShowDialog() != DialogResult.OK) return;
-
-            var outputFolder = fbd.SelectedPath;
-
-            // ── File name base ──
-            string fileBase = selected
-                .Select(a => a.LotBlockNumber?.Trim() ?? "(No Block)")
-                .Distinct()
-                .Count() == 1
-                    ? selected[0].LotBlockNumber!.Trim()
-                    : "Selected";
+                var account = selected[0];
+                string lessee = account.LesseeName?.Trim() ?? "Record";
+                string delYear = string.IsNullOrWhiteSpace(account.DelinquentYear) ? "" : $"{account.DelinquentYear.Trim()}_";
+                fileBase = $"{delYear}{lessee}";
+            }
+            else
+            {
+                fileBase = selected.Select(a => a.LotBlockNumber?.Trim() ?? "(No Block)")
+                                   .Distinct().Count() == 1
+                        ? selected[0].LotBlockNumber!.Trim()
+                        : "Selected";
+            }
 
             string safeBase = MakeSafeFileName(fileBase);
             string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
-            bool isWord = string.Equals(exportFormat, "DOCX", StringComparison.OrdinalIgnoreCase);
+            bool isWord = string.Equals(_exportFormat, "DOCX", StringComparison.OrdinalIgnoreCase);
             string extension = isWord ? "docx" : "pdf";
-            string fileName = $"Statements_{safeBase}_{paperSize}_{timestamp}.{extension}";
-            string filePath = Path.Combine(outputFolder, fileName);
+            string suggestedFileName = $"SoA_{safeBase}_{_paperSize}_{timestamp}.{extension}";
+
+            // 1. Get the last used folder from settings, default to Documents if empty
+            if (string.IsNullOrWhiteSpace(_lastFolder) || !Directory.Exists(_lastFolder))
+            {
+                _lastFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            }
+
+            // ── Ask for output path (SaveFileDialog shows both Folder and Filename) ──
+            using var sfd = new SaveFileDialog
+            {
+                Title = "Save Statement as",
+                InitialDirectory = _lastFolder,
+                FileName = suggestedFileName, // 👈 Pre-fills the filename!
+                DefaultExt = extension,
+                Filter = isWord ? "Word documents (*.docx)|*.docx" : "PDF files (*.pdf)|*.pdf",
+                AddExtension = true,
+                OverwritePrompt = true
+            };
+
+            if (sfd.ShowDialog() != DialogResult.OK) return;
+
+            // The user might have changed the filename or folder, so use their choice
+            string filePath = sfd.FileName;
+
+            try
+            {
+                Properties.Settings.Default.LastOutputFolder = Path.GetDirectoryName(sfd.FileName);
+                Properties.Settings.Default.Save();
+            }
+            catch { }
 
             // ── Run the export with progress ──
             var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -806,12 +881,12 @@ public partial class MainForm : Form
                         if (isWord)
                         {
                             // Word: one combined .docx for the selected rows
-                            WordTemplateService.GenerateCombinedWord(filePath, selected.ToList(), paperSize);
+                            WordTemplateService.GenerateCombinedWord(filePath, selected.ToList(), _paperSize);
                         }
                         else
                         {
                             // PDF: reuse the per-block renderer
-                            CreatePdfPerBlock(filePath, paperSize, skipZero, selected);
+                            CreatePdfPerBlock(filePath, _paperSize, _skipZeroTotal, selected);
                         }
 
                         progress.Report((100, $"Done. Saved {selected.Count} record(s)."));
@@ -827,9 +902,9 @@ public partial class MainForm : Form
             }
 
             lblStatus.Text =
-                $"Saved {selected.Count} record(s) as {exportFormat} in {FormatElapsed(sw.Elapsed)} → {filePath}";
+                $"Saved {selected.Count} record(s) as {_exportFormat} in {FormatElapsed(sw.Elapsed)} → {filePath}";
 
-            if (AskYesNo($"{exportFormat} created. Open it now?"))
+            if (AskYesNo($"{_exportFormat} created. Open it now?"))
                 OpenFile(filePath);
         }
         catch (Exception ex)
@@ -858,7 +933,7 @@ public partial class MainForm : Form
     {
         PrintSelected();
     }
-    private async Task ExportAllAsPdfAsync(bool skipZero = false, bool onlyZero = false)
+    private async Task ExportAllAsPdfAsync(bool _skipZero = false, bool onlyZero = false, bool onlySearchResults = false)
     {
         if (_accounts.Count == 0)
         {
@@ -867,25 +942,63 @@ public partial class MainForm : Form
             return;
         }
 
-        string paperSize = Properties.Settings.Default.PaperSize ?? "A4";
-        //bool skipZero = Properties.Settings.Default.SkipZeroTotal;
-
         // ── Build the filtered source as a List<CemeteryLotAccount> ──
         List<CemeteryLotAccount> source = _accounts.ToList();
 
-        using var fbd = new FolderBrowserDialog
+        // 1. Build the suggested folder path
+        string defaultDocs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        string baseSuggestedFolder = _lastOutputFolder ?? defaultDocs;
+
+        if (!string.IsNullOrWhiteSpace(_lastImportedFileName))
         {
-            Description = "Choose output folder for per-block PDFs"
-        };
-        if (fbd.ShowDialog() != DialogResult.OK) return;
+            baseSuggestedFolder = Path.Combine(defaultDocs, Path.GetFileNameWithoutExtension(_lastImportedFileName));
+        }
 
-        //toolStripButtonImportExcel.Enabled = false;
-        //toolStripSplitButtonExport.Enabled = false;
-        //toolStripMenuItemBlockFilter.Enabled = false;
-        //toolStripMenuItemExportSelected.Enabled = false;
-        //toolStripMenuItemBlockFilter.Enabled = false;
+        // 1.2. 👇 Check if it exists and get a unique name (e.g., "RENT OF LOT (2)")
+        string suggestedFolder = GetUniqueFolderPath(baseSuggestedFolder);
 
-        var outputFolder = fbd.SelectedPath;
+        string outputFolder = string.Empty;
+
+        // 2. Show the custom popup
+        using (var prompt = new ExportFolderPrompt(suggestedFolder))
+        {
+            var result = prompt.ShowDialog(this);
+
+            if (result == DialogResult.Cancel) return; // User cancelled
+
+            if (result == DialogResult.Yes)
+            {
+                // User accepted the suggested folder. Create it if it doesn't exist.
+                try
+                {
+                    if (!Directory.Exists(suggestedFolder))
+                        Directory.CreateDirectory(suggestedFolder);
+
+                    outputFolder = suggestedFolder;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Could not create the folder:\n" + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+            }
+            else if (result == DialogResult.No)
+            {
+                // User wants to choose their own folder. Fallback to standard dialog.
+                using var fbd = new FolderBrowserDialog
+                {
+                    Description = "Choose output folder for per-block PDFs",
+                    SelectedPath = suggestedFolder,
+                    ShowNewFolderButton = true
+                };
+
+                if (fbd.ShowDialog() != DialogResult.OK) return;
+                outputFolder = fbd.SelectedPath;
+            }
+        }
+
+        // 3. Now you have your outputFolder! Continue with the export.
+        //MessageBox.Show("Exporting to: " + outputFolder, "Ready"); // (Replace this with your actual export logic)
 
         // ── Read selected blocks from the popup's stored set ──
         var selectedBlocks = new HashSet<string>(_selectedBlocks, StringComparer.OrdinalIgnoreCase);
@@ -918,11 +1031,14 @@ public partial class MainForm : Form
         var skippedZeroOrigCount = source.Count();
 
         // 2) Skip-zero filter
-        if (skipZero)
+        if (_skipZero)
             source = source.Where(a => !IsZeroTotal(a.TotalAmountDue)).ToList();
         // 2.5) Only-zero filter
         else if (onlyZero)
             source = source.Where(a => IsZeroTotal(a.TotalAmountDue)).ToList();
+        // 2.6) Only-zero filter
+        else if (onlySearchResults)
+            source = _filteredAccounts.ToList();
 
         if (source.Count == 0)
         {
@@ -933,9 +1049,12 @@ public partial class MainForm : Form
 
         // 3) Group by block — this is where `groups` comes from
         var groups = source
-            .GroupBy(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
-                            ? "(No Block)"
-                            : a.LotBlockNumber.Trim())
+            .GroupBy(a =>
+                // 👇 If searching, put everything into one group. Otherwise, group by block.
+                _isSearching
+                    ? "Search Results"
+                    : (string.IsNullOrWhiteSpace(a.LotBlockNumber) ? "(No Block)" : a.LotBlockNumber.Trim())
+            )
             .OrderBy(g => ExtractBlockNumber(g.Key))
             .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -982,15 +1101,17 @@ public partial class MainForm : Form
             {
                 await Task.Run(() =>
                 {
+                    int exportableCount = groups.Sum(g => g.Count());
                     foreach (var group in groups)
                     {
                         string safeBlock = MakeSafeFileName(group.Key);
+                        string searchResults = onlySearchResults ? $"MATCHES-{_searchTerm.Replace(" ", "_").ToUpper()}_({exportableCount})" : "";
                         string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                        string fileName = $"Statements_{safeBlock}_{paperSize}_{timestamp}.pdf";
+                        string fileName = $"Statements_{(searchResults ?? safeBlock)}_{_paperSize}_{timestamp}.pdf";
                         string blockPath = Path.Combine(outputFolder, fileName);
 
                         // Same template, only that block's rows
-                        CreatePdfPerBlock(blockPath, paperSize, skipZero, group.ToList());
+                        CreatePdfPerBlock(blockPath, _paperSize, _skipZero, group.ToList());
 
                         generated++;
                     }
@@ -1007,8 +1128,8 @@ public partial class MainForm : Form
                 $"Folder      : {outputFolder}\n" +
                 $"Blocks      : {generated} of {totalBlocks}\n" +
                 $"Records     : {totalRecords} of {skippedZeroOrigCount}" +
-                    (skipZero ? $" (skipped ₱0.00)" : "") + "\n" +
-                $"Paper size  : {paperSize}\n" +
+                    (_skipZero ? $" (skipped ₱0.00)" : "") + "\n" +
+                $"Paper size  : {_paperSize}\n" +
                 $"Elapsed time: {FormatElapsed(sw.Elapsed)}"));
         });
 
@@ -1037,6 +1158,47 @@ public partial class MainForm : Form
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             { FileName = outputFolder, UseShellExecute = true });
     }
+    private string GetUniqueFolderPath(string basePath)
+    {
+        // 1. If the base folder doesn't exist, we can use it as-is
+        if (!Directory.Exists(basePath))
+            return basePath;
+
+        string parentDir = Path.GetDirectoryName(basePath);
+        string baseName = Path.GetFileName(basePath);
+        int maxNumber = 1; // The base folder counts as "1"
+
+        // 2. Look for all folders in the parent directory
+        if (!string.IsNullOrEmpty(parentDir) && Directory.Exists(parentDir))
+        {
+            var dirs = Directory.GetDirectories(parentDir, $"{baseName}*");
+
+            foreach (var dir in dirs)
+            {
+                string folderName = Path.GetFileName(dir);
+
+                // Check if it exactly matches "FolderName" or "FolderName (X)"
+                if (folderName.Equals(baseName, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Base folder exists, max is at least 1
+                    maxNumber = Math.Max(maxNumber, 1);
+                }
+                else if (folderName.StartsWith($"{baseName} (", StringComparison.OrdinalIgnoreCase) &&
+                         folderName.EndsWith(")"))
+                {
+                    // Extract the number inside the parentheses
+                    string numStr = folderName.Substring(baseName.Length + 2, folderName.Length - baseName.Length - 3);
+                    if (int.TryParse(numStr, out int num))
+                    {
+                        maxNumber = Math.Max(maxNumber, num);
+                    }
+                }
+            }
+        }
+
+        // 3. Return the base name with the next highest number
+        return $"{basePath} ({maxNumber + 1})";
+    }
     private static string FormatElapsed(TimeSpan t)
     {
         if (t.TotalHours >= 1) return $"{(int)t.TotalHours}h {t.Minutes}m {t.Seconds}s";
@@ -1062,6 +1224,7 @@ public partial class MainForm : Form
         //toolStripMenuItemBlockFilter.Enabled = false;
 
         var filePath = ofd.FileName;
+        _lastImportedFileName = Path.GetFileNameWithoutExtension(filePath); // e.g., "RENT OF LOT"
         var imported = new List<CemeteryLotAccount>();   // ← LOCAL list, not _accounts
 
         // ── Run the export with progress ──
@@ -1143,12 +1306,18 @@ public partial class MainForm : Form
 
         //PopulateBlockFilter();
         await RebuildBlockTabsAsync();
-        UpdateBlockFilterCaption();
         SaveAccountsToDisk();
 
         toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;   // ← add this
+        _lastImportedFileName = Path.GetFileName(filePath);
+        try
+        {
+            Properties.Settings.Default.LastImportedFileName = _lastImportedFileName;
+            Properties.Settings.Default.Save();
+        }
+        catch { }
         lblStatus.Text = $"Imported {_accounts.Count} row(s) from " +
-                         $"{Path.GetFileName(filePath)}.";
+                         $"{_lastImportedFileName}.";
 
         if (toolStripSplitButtonExport.Enabled && toolStripSplitButtonExport.Visible)
         {
@@ -1167,6 +1336,88 @@ public partial class MainForm : Form
             lblStatus.Text = $"Export failed after {FormatElapsed(sw.Elapsed)}";
             return;   // ← no prompt
         }
+    }
+    private void Grid_ColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
+    {
+        var grid = (DataGridView)sender;
+        int colIndex = e.ColumnIndex;
+
+        // 1. Get the column name safely
+        string propName = grid.Columns[colIndex].DataPropertyName;
+        if (string.IsNullOrEmpty(propName)) return;
+
+        // 2. Get the current data
+        var blockList = grid.DataSource as BindingList<CemeteryLotAccount>;
+        if (blockList == null) return;
+        var accounts = blockList.ToList();
+
+        // 3. Determine sort direction (check the CURRENT glyph before we reset it)
+        ListSortDirection direction = ListSortDirection.Ascending;
+        if (grid.Tag is string lastSort && lastSort == propName)
+        {
+            // Toggle direction if clicking the same column
+            direction = grid.Columns[colIndex].HeaderCell.SortGlyphDirection == SortOrder.Ascending
+                ? ListSortDirection.Descending
+                : ListSortDirection.Ascending;
+        }
+
+        // 4. Sort the data
+        if (propName == "TotalAmountDue" || propName == "RentalOrRenewalFee" || propName == "Surcharge" || propName == "Interest" || propName == "AreaSqm")
+        {
+            // Sort Numerically
+            accounts = direction == ListSortDirection.Ascending
+                ? accounts.OrderBy(a => GetPropValueAsDecimal(a, propName)).ToList()
+                : accounts.OrderByDescending(a => GetPropValueAsDecimal(a, propName)).ToList();
+        }
+        else
+        {
+            // Sort Alphabetically
+            var propInfo = typeof(CemeteryLotAccount).GetProperty(propName);
+            if (propInfo != null)
+            {
+                accounts = direction == ListSortDirection.Ascending
+                    ? accounts.OrderBy(a => propInfo.GetValue(a, null)?.ToString()).ToList()
+                    : accounts.OrderByDescending(a => propInfo.GetValue(a, null)?.ToString()).ToList();
+            }
+        }
+
+        // 5. Rebind the grid (This destroys the old columns and creates new ones)
+        grid.DataSource = new BindingList<CemeteryLotAccount>(accounts);
+
+        // 6. Clear all arrows
+        foreach (DataGridViewColumn col in grid.Columns)
+        {
+            col.HeaderCell.SortGlyphDirection = SortOrder.None;
+        }
+
+        // 7. Add the arrow to the NEW column object
+        // We must use colIndex because the old 'column' variable was destroyed in step 5.
+        grid.Columns[colIndex].HeaderCell.SortGlyphDirection = direction == ListSortDirection.Ascending
+            ? SortOrder.Ascending
+            : SortOrder.Descending;
+
+        // 8. Remember which column was sorted
+        grid.Tag = propName;
+    }
+
+    // Helper method to safely extract the decimal value based on the column name
+    private decimal GetPropValueAsDecimal(CemeteryLotAccount a, string propName)
+    {
+        string val = propName switch
+        {
+            "TotalAmountDue" => a.TotalAmountDue,
+            "RentalOrRenewalFee" => a.RentalOrRenewalFee,
+            "Surcharge" => a.Surcharge,
+            "Interest" => a.Interest,
+            "AreaSqm" => a.AreaSqm,
+            _ => "0"
+        };
+
+        // Clean the string (remove ₱, commas, etc.) before parsing
+        val = val?.Replace("₱", "").Replace(",", "").Trim() ?? "0";
+
+        decimal.TryParse(val, out var result);
+        return result;
     }
     private static decimal ParseNum(IXLRow row, string columnLetter)
     {
@@ -1416,8 +1667,7 @@ public partial class MainForm : Form
 
         try
         {
-            string paperSize = Properties.Settings.Default.PaperSize ?? "A4";
-            WordTemplateService.GenerateCombinedWord(sfd.FileName, _accounts.ToList(), paperSize);
+            WordTemplateService.GenerateCombinedWord(sfd.FileName, _accounts.ToList(), _paperSize);
 
             lblStatus.Text = $"Generated {_accounts.Count} statement(s) in {Path.GetFileName(sfd.FileName)}";
 
@@ -1435,7 +1685,7 @@ public partial class MainForm : Form
     }
     #endregion
 
-    private void CreatePdfPerBlock(string path, string paperSize, bool skipZero, IEnumerable<CemeteryLotAccount> accounts)
+    private void CreatePdfPerBlock(string path, string _paperSize, bool _skipZero, IEnumerable<CemeteryLotAccount> accounts)
     {
         var list = accounts.ToList();
         if (list.Count == 0)
@@ -1462,7 +1712,7 @@ public partial class MainForm : Form
                 doc.Page(page =>
                 {
                     // ── Same layout as your original CreatePdf ──
-                    switch (paperSize)
+                    switch (_paperSize)
                     {
                         case "Legal": page.Size(PageSizes.Legal); break;
                         default: page.Size(PageSizes.A4); break;
@@ -1539,7 +1789,7 @@ public partial class MainForm : Form
                                 InfoLine(inf, "Area / Sukat: ", a.AreaSqm + " sq. m.");
                                 InfoLine(inf, "Name of Deceased: ", a.NameOfDeceased);
                                 inf.Item().PaddingTop(12);
-                                InfoLine(inf, "Last payment: ", a.LastPayment);
+                                InfoLine(inf, "Last Payment: ", a.LastPayment);
                             });
                         });
 
@@ -1772,14 +2022,12 @@ public partial class MainForm : Form
 
     private async void OpenSettings()
     {
-        var isWordExportEnabled = Properties.Settings.Default.EnableWordExport;
-        var skipZeroTotal = Properties.Settings.Default.SkipZeroTotal;
-        var savedFormat = !isWordExportEnabled ? "PDF" : Properties.Settings.Default.ExportFormat;
+        var savedFormat = !_isWordExportEnabled ? "PDF" : _exportFormat;
 
         using var dlg = new SettingsForm(
             this,
-            skipZeroTotal,
-            Properties.Settings.Default.PaperSize,
+            _skipZeroTotal,
+            _paperSize,
             savedFormat);
 
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
@@ -1797,7 +2045,7 @@ public partial class MainForm : Form
         Bitmap bmp = isPdf ? Properties.Resources.pdf : Properties.Resources.doc;
         toolStripSplitButtonExport.Image = bmp;
 
-        if (skipZeroTotal != dlg.SkipZeroTotal)
+        if (_skipZeroTotal != dlg.SkipZeroTotal)
             await RebuildBlockTabsAsync();
 
         //fileToolStripMenuItem.Enabled = !isPdf;
@@ -1838,6 +2086,7 @@ public partial class MainForm : Form
 
         // Group once, then emit (name, count) pairs in natural order
         var blocksWithCounts = _accounts
+            .Where(a => !_skipZeroTotal || !IsZeroTotal(a.TotalAmountDue))
             .GroupBy(a => string.IsNullOrWhiteSpace(a.LotBlockNumber)
                             ? "(No Block)"
                             : a.LotBlockNumber.Trim())
@@ -1855,7 +2104,7 @@ public partial class MainForm : Form
     }
     private async void OnBlockFilterVisibilityChanged(object? sender, EventArgs e)
     {
-        if (_blockPopup != null && !_blockPopup.Visible)
+        if (_blockPopup != null && !_blockPopup.Visible && _selectedBlocks.Count != 0)
             await RebuildBlockTabsAsync();
     }
     private void OnBlockSelectionChanged(HashSet<string> selected)
@@ -1870,6 +2119,7 @@ public partial class MainForm : Form
     private void UpdateBlockFilterCaption()
     {
         int total = _accounts
+            .Where(a => !_skipZeroTotal || !IsZeroTotal(a.TotalAmountDue))
             .Select(a => a.LotBlockNumber?.Trim() ?? "(No Block)")
             .Distinct()
             .Count();
@@ -1963,7 +2213,6 @@ public partial class MainForm : Form
         _cacheCleared = true;
 
         await RebuildBlockTabsAsync();
-        UpdateBlockFilterCaption();
         CacheClearedUI();
     }
     private async Task LoadAccountsFromDiskAsync()
@@ -2017,15 +2266,13 @@ public partial class MainForm : Form
 
         await RebuildBlockTabsAsync();
         _selectedBlocks.Clear();
-        UpdateBlockFilterCaption();
 
         toolStripButtonImportExcel.Enabled = _accounts.Count > 0;
         toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
         toolStripSplitButtonExport.Enabled = _accounts.Count > 0;
 
-        bool skipZero = Properties.Settings.Default.SkipZeroTotal;
 
-        lblStatus.Text = $"Loaded {_accounts.Count} cached record(s) from previous session.{(skipZero ? " (skipped ₱0.00)" : "")}";
+        lblStatus.Text = $"Loaded {_accounts.Count} cached record(s) from previous session.{(_skipZeroTotal ? " (skipped ₱0.00)" : "")}";
 
         if (toolStripSplitButtonExport.Enabled && toolStripSplitButtonExport.Visible)
         {
@@ -2048,53 +2295,44 @@ public partial class MainForm : Form
     {
     }
 
-    private void toolStripSplitButtonExport_ButtonClick(object sender, EventArgs e)
+    private async void toolStripSplitButtonExport_ButtonClick(object sender, EventArgs e)
     {
-        ExportAllAsPdfAsync();
+        await ExportAllAsPdfAsync();
     }
 
-    private void exportAllskip000TotalAmountDueToolStripMenuItem_Click(object sender, EventArgs e)
+    private async void exportAllskip000TotalAmountDueToolStripMenuItem_Click(object sender, EventArgs e)
     {
-        ExportAllAsPdfAsync(skipZero: true);
+        await ExportAllAsPdfAsync(_skipZero: true);
     }
 
-    private void exportAllonly000TotalAmountDueToolStripMenuItem_Click(object sender, EventArgs e)
+    private async void exportAllonly000TotalAmountDueToolStripMenuItem_Click(object sender, EventArgs e)
     {
-        ExportAllAsPdfAsync(onlyZero: true);
+        await ExportAllAsPdfAsync(onlyZero: true);
+    }
+
+    private async void exportSearchResultsToolStripMenuItem_Click(object sender, EventArgs e)
+    {
+        await ExportAllAsPdfAsync(onlySearchResults: true);
     }
 
     private async void checkForUpdatesToolStripMenuItem_Click(object sender, EventArgs e)
     {
         await CheckForUpdatesBlocking();
     }
-
-    private void toolStripTextBoxSearch_KeyDown(object sender, KeyEventArgs e)
-    {
-        // Check if the user pressed Enter
-        //if (e.KeyCode == Keys.Enter)
-        //{
-        //    e.SuppressKeyPress = true;
-        //    e.Handled = true;
-
-        //    await RebuildBlockTabsAsync();
-        //}
-    }
     private async void toolStripTextBoxSearch_TextChanged(object sender, EventArgs e)
     {
-        string searchTerm = toolStripTextBoxSearch.Text.Trim();
-
         // Enable/disable the clear button based on if there is text
-        toolStripButtonClear.Enabled = !string.IsNullOrEmpty(searchTerm) && searchTerm != "Search Lessee, Deceased, Address…";
+        toolStripButtonClear.Enabled = !string.IsNullOrEmpty(_searchTerm) && _searchTerm != SearchHint;
 
         // 👇 If it's less than 3 characters, stop the timer and DO NOT search.
-        if (searchTerm.Length > 0 && searchTerm.Length < 3)
+        if (_searchTerm.Length > 0 && _searchTerm.Length < 3)
         {
             _searchDebounceTimer.Stop();
             return;
         }
 
         // If it's exactly empty (length 0), we want to clear the search and show all tabs.
-        if (searchTerm.Length == 0)
+        if (_isSearching && _searchTerm.Length == 0)
         {
             _searchDebounceTimer.Stop();
             if (_lastSearchTerm != string.Empty)
@@ -2113,11 +2351,9 @@ public partial class MainForm : Form
     {
         _searchDebounceTimer.Stop();
 
-        string currentSearchTerm = toolStripTextBoxSearch.Text.Trim();
-
-        if (currentSearchTerm != _lastSearchTerm)
+        if (_searchTerm != _lastSearchTerm && _searchTerm != SearchHint)
         {
-            _lastSearchTerm = currentSearchTerm;
+            _lastSearchTerm = _searchTerm;
             await RebuildBlockTabsAsync();
         }
     }
@@ -2125,5 +2361,18 @@ public partial class MainForm : Form
     private void toolStripButtonClear_Click(object sender, EventArgs e)
     {
         toolStripTextBoxSearch.Text = "";
+    }
+
+    private void whatsNewToolStripMenuItem_Click(object sender, EventArgs e)
+    {
+        string changelogUrl = "https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/changelog.html";
+
+        using var dlg = new WhatsNewForm(changelogUrl);
+        dlg.ShowDialog(this);
+    }
+
+    private async void toolStripComboBoxSearchColumn_SelectedIndexChanged(object sender, EventArgs e)
+    {
+        await RebuildBlockTabsAsync();
     }
 }
