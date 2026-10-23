@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Changelog</title>
+    <style>
+        :root {
+            --primary: #0078D7;
+            --bg: #f3f4f6;
+            --card-bg: #ffffff;
+            --text: #333;
+            --border: #e5e7eb;
+            --badge-update: #107C10; 
+            --badge-fix: #D13438;    
+            --badge-feature: #005A9E; 
+            --badge-improvement: #8764B8; 
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 750px;
+            margin: 0 auto;
+        }
+
+        .version-card {
+            background: var(--card-bg);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        /* The clickable header */
+        .version-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            cursor: pointer;
+            background: #ffffff;
+            transition: background 0.2s;
+            user-select: none;
+        }
+
+        .version-header:hover {
+            background: #f9fafb;
+        }
+
+        /* Header left side (Arrow + Version) */
+        .version-title-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .arrow {
+            width: 10px;
+            height: 10px;
+            border-right: 2px solid #6b7280;
+            border-bottom: 2px solid #6b7280;
+            transform: rotate(-45deg);
+            transition: transform 0.3s ease;
+        }
+
+        /* Arrow points down when open */
+        .version-card.open .arrow {
+            transform: rotate(45deg);
+        }
+
+        .version-title {
+            font-size: 17px;
+            font-weight: 600;
+            color: var(--primary);
+            margin: 0;
+        }
+
+        .version-date {
+            font-size: 13px;
+            color: #6b7280;
+            background: #f3f4f6;
+            padding: 4px 12px;
+            border-radius: 20px;
+        }
+
+        /* Content area */
+        .version-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+            padding: 0 20px;
+            border-top: 1px solid transparent;
+        }
+
+        .version-card.open .version-content {
+            max-height: 1000px; /* Arbitrary large height to allow expansion */
+            padding: 0 20px 20px 20px;
+            border-top-color: var(--border);
+        }
+
+        /* Badges */
+        .section-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 16px;
+            margin-bottom: 8px;
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            color: white;
+        }
+
+        .section-update { background-color: var(--badge-update); }
+        .section-fix { background-color: var(--badge-fix); }
+        .section-feature { background-color: var(--badge-feature); }
+        .section-improvement { background-color: var(--badge-improvement); }
+
+        ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+
+        li {
+            margin-bottom: 6px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container" id="changelog-container">
+        <!-- The JavaScript will inject the accordions here -->
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. ADD NEW UPDATES HERE (JSON FORMAT)
+        // ==========================================
+        const changelogData = [
+            {
+                version: "Version 1.0.8.5",
+                date: "October 22, 2026",
+                sections: [
+                    {
+                        type: "feature",
+                        title: "New Features",
+                        items: [
+							"Added 'Export Search Results' option",
+                            "Auto create export folder option (with same name as import file).",
+                            "DataGridView header click sort."
+                        ]
+                    }
+                ]
+            },
+            {
+                version: "Version 1.0.8.4",
+                date: "October 22, 2026",
+                sections: [
+                    {
+                        type: "update",
+                        title: "Updates",
+                        items: ["Auto Updater Restart App."]
+                    }
+                ]
+            },
+            {
+                version: "Version 1.0.8.3",
+                date: "October 22, 2026",
+                sections: [
+                    {
+                        type: "update",
+                        title: "Updates",
+                        items: ["Last Payment & Delinquent Year fields."]
+                    }
+                ]
+            },
+            {
+                version: "Version 1.0.8.1",
+                date: "October 20, 2026",
+                sections: [
+                    {
+                        type: "improvement",
+                        title: "Improvements",
+                        items: [
+                            "Added app icon.",
+                            "Open bug, fixes, and improvements url."
+                        ]
+                    }
+                ]
+            },
+            {
+                version: "Version 1.0.8.47337",
+                date: "October 19, 2026",
+                sections: [
+                    {
+                        type: "fix",
+                        title: "Bug Fixes",
+                        items: ["Check for Updates function."]
+                    }
+                ]
+            },
+            {
+                version: "Version 1.0.2.64463",
+                date: "October 19, 2026",
+                sections: [
+                    {
+                        type: "feature",
+                        title: "New Features",
+                        items: [
+                            "Added a search bar to filter records by Name, Deceased, or Block.",
+                            "Added an 'Empty State' screen with a large Import button when no data is loaded.",
+                            "Users can now choose to load previous data or clear cache on startup."
+                        ]
+                    },
+                    {
+                        type: "fix",
+                        title: "Bug Fixes",
+                        items: [
+                            "Fixed PDF generation failing when exporting multiple blocks.",
+                            "Fixed a bug where clearing the cache didn't actually delete the saved file."
+                        ]
+                    },
+                    {
+                        type: "improvement",
+                        title: "Improvements",
+                        items: [
+                            "The 'Export All as PDF' button now shows a live progress bar during generation.",
+                            "Updated the app to use the latest version of QuestPDF for faster rendering."
+                        ]
+                    }
+                ]
+            },
+            {
+                version: "Version 1.0.0.2",
+                date: "October 19, 2026",
+                sections: [
+                    {
+                        type: "update",
+                        title: "Updates",
+                        items: ["Added AutoUpdater integration."]
+                    }
+                ]
+            },
+            {
+                version: "Version 1.0.0.1",
+                date: "October 15, 2026",
+                sections: [
+                    {
+                        type: "update",
+                        title: "Updates",
+                        items: ["Initial release with PDF export support."]
+                    }
+                ]
+            }
+        ];
+
+        // ==========================================
+        // 2. UI GENERATOR (No need to edit below here)
+        // ==========================================
+        const container = document.getElementById('changelog-container');
+
+        changelogData.forEach((release, index) => {
+            // Create Card
+            const card = document.createElement('div');
+            // Automatically open the first (latest) item
+            card.className = `version-card ${index === 0 ? 'open' : ''}`;
+
+            // Build sections HTML
+            let sectionsHtml = '';
+            release.sections.forEach(section => {
+                const listItems = section.items.map(item => `<li>${item}</li>`).join('');
+                sectionsHtml += `
+                    <span class="section-title section-${section.type}">${section.title}</span>
+                    <ul>${listItems}</ul>
+                `;
+            });
+
+            // Build Card HTML
+            card.innerHTML = `
+                <div class="version-header" onclick="toggleCard(this)">
+                    <div class="version-title-group">
+                        <div class="arrow"></div>
+                        <h2 class="version-title">${release.version}</h2>
+                    </div>
+                    <span class="version-date">${release.date}</span>
+                </div>
+                <div class="version-content">
+                    ${sectionsHtml}
+                </div>
+            `;
+
+            container.appendChild(card);
+        });
+
+        // Toggle function
+        function toggleCard(headerElement) {
+            const card = headerElement.parentElement;
+            card.classList.toggle('open');
+        }
+    </script>
+</body>
+</html>
