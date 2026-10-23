@@ -1,0 +1,142 @@
+[
+  {
+    "version": "Version 1.0.8.7",
+    "date": "October 22, 2026",
+    "sections": [
+      {
+        "type": "update",
+        "title": "Updates",
+        "items": [
+          "What's New? Viewer"
+        ]
+      }
+    ]
+  },
+  {
+    "version": "Version 1.0.8.6",
+    "date": "October 22, 2026",
+    "sections": [
+      {
+        "type": "update",
+        "title": "Updates",
+        "items": [
+          "Auto create export folder option (with same name as import file).",
+          "DataGridView header click sort.",
+          "Added 'Export Search Results' option.",
+          "Column dropdown search filter (Lessee, Address, Deceased, Lot/Block).",
+          "What's New? Viewer."
+        ]
+      }
+    ]
+  },
+  {
+    "version": "Version 1.0.8.4",
+    "date": "October 22, 2026",
+    "sections": [
+      {
+        "type": "update",
+        "title": "Updates",
+        "items": [
+          "Auto Updater Restart App."
+        ]
+      }
+    ]
+  },
+  {
+    "version": "Version 1.0.8.3",
+    "date": "October 22, 2026",
+    "sections": [
+      {
+        "type": "update",
+        "title": "Updates",
+        "items": [
+          "Last Payment & Delinquent Year fields."
+        ]
+      }
+    ]
+  },
+  {
+    "version": "Version 1.0.8.1",
+    "date": "October 20, 2026",
+    "sections": [
+      {
+        "type": "improvement",
+        "title": "Improvements",
+        "items": [
+          "Added app icon.",
+          "Open bug, fixes, and improvements url."
+        ]
+      }
+    ]
+  },
+  {
+    "version": "Version 1.0.8.47337",
+    "date": "October 19, 2026",
+    "sections": [
+      {
+        "type": "fix",
+        "title": "Bug Fixes",
+        "items": [
+          "Check for Updates function."
+        ]
+      }
+    ]
+  },
+  {
+    "version": "Version 1.0.2.64463",
+    "date": "October 20, 2026",
+    "sections": [
+      {
+        "type": "feature",
+        "title": "New Features",
+        "items": [
+          "Added a search bar to filter records by Name, Deceased, or Block.",
+          "Added an \"Empty State\" screen with a large Import button when no data is loaded.",
+          "Users can now choose to load previous data or clear cache on startup."
+        ]
+      },
+      {
+        "type": "fix",
+        "title": "Bug Fixes",
+        "items": [
+          "Fixed PDF generation failing when exporting multiple blocks.",
+          "Fixed a bug where clearing the cache didn't actually delete the saved file."
+        ]
+      },
+      {
+        "type": "improvement",
+        "title": "Improvements",
+        "items": [
+          "The \"Export All as PDF\" button now shows a live progress bar during generation.",
+          "Updated the app to use the latest version of QuestPDF for faster rendering."
+        ]
+      }
+    ]
+  },
+  {
+    "version": "Version 1.0.0.2",
+    "date": "October 19, 2026",
+    "sections": [
+      {
+        "type": "update",
+        "title": "Updates",
+        "items": [
+          "Added AutoUpdater integration."
+        ]
+      }
+    ]
+  },
+  {
+    "version": "Version 1.0.0.1",
+    "date": "October 15, 2026",
+    "sections": [
+      {
+        "type": "update",
+        "title": "Updates",
+        "items": [
+          "Initial release with PDF export support."
+        ]
+      }
+    ]
+  }
+]
