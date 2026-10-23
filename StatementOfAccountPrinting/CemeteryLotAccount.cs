@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace StatementOfAccountPrinting;
 
 /// <summary>
@@ -55,4 +57,26 @@ public class CemeteryLotAccount
         public ToolStripComboBoxItem(string display, string key) { Display = display; Key = key; }
         public override string ToString() => Display;
     }
+}
+public class ChangelogRelease
+{
+    [JsonPropertyName("version")]
+    public string Version { get; set; }
+
+    [JsonPropertyName("date")]
+    public string Date { get; set; }
+
+    [JsonPropertyName("sections")]
+    public List<ChangelogSection> Sections { get; set; }
+}
+
+public class ChangelogSection
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; }
+    [JsonPropertyName("title")]
+    public string Title { get; set; }
+
+    [JsonPropertyName("items")]
+    public List<string> Items { get; set; }
 }

@@ -2395,14 +2395,14 @@ public partial class MainForm : Form
 
     private void ShowWhatsNewForm()
     {
-        try
-        {
-            string changelogUrl = "https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/changelog.html";
+        // Use the Raw JSON link
+        string changelogJsonUrl = "https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/changelog.json";
 
-            using var dlg = new WhatsNewForm(changelogUrl);
-            dlg.ShowDialog(this);
-        }
-        catch { /* Ignore errors so it doesn't block startup */ }
+        // Get current version from your helper
+        string currentVersion = GetAppVersion();
+
+        using var dlg = new WhatsNewForm(changelogJsonUrl, currentVersion);
+        dlg.ShowDialog(this);
     }
 
     private async void toolStripComboBoxSearchColumn_SelectedIndexChanged(object sender, EventArgs e)

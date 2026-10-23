@@ -1,4 +1,12 @@
-Version 1.0.8.7 (October 22, 2026)
+Version 1.0.8.9 (October 23, 2026)
+--------------------------------------
+
+Version 1.0.8.7 (October 23, 2026)
+--------------------------------------
+UPDATES:
+- What's New? Viewer
+
+Version 1.0.8.6 (October 23, 2026)
 --------------------------------------
 UPDATES:
 - Auto create export folder option (with same name as import file).
