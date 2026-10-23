@@ -94,5 +94,17 @@ namespace StatementOfAccountPrinting.Properties {
                 this["LastImportedFileName"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        public bool ShowChangelogOnNextStart {
+            get {
+                return ((bool)(this["ShowChangelogOnNextStart"]));
+            }
+            set {
+                this["ShowChangelogOnNextStart"] = value;
+            }
+        }
     }
 }

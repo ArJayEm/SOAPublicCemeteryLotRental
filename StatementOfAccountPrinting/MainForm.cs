@@ -70,6 +70,7 @@ public partial class MainForm : Form
 
         InitSearchPlaceholder();
         LoadSearchFilterItems();
+        LoadIfNewInstall();
     }
     #region FIRST LOAD...
     private async void MainForm_Shown(object sender, EventArgs e)
@@ -229,6 +230,18 @@ public partial class MainForm : Form
 
         toolStripComboBoxSearchColumn.SelectedIndex = 0;
     }
+    private void LoadIfNewInstall()
+    {
+        // 1. Check if we just updated
+        if (Properties.Settings.Default.ShowChangelogOnNextStart)
+        {
+            // Reset the flag immediately so it doesn't show again
+            Properties.Settings.Default.ShowChangelogOnNextStart = false;
+            Properties.Settings.Default.Save();
+
+            ShowWhatsNewForm();
+        }
+    }
     #endregion
     #region UPDATES...
     private async Task CheckForUpdatesBlocking()
@@ -261,7 +274,8 @@ public partial class MainForm : Form
         };
 
         AutoUpdaterDotNET.AutoUpdater.CheckForUpdateEvent += handler;
-        AutoUpdaterDotNET.AutoUpdater.Start("https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/updates.xml");
+        string cacheBuster = DateTime.Now.Ticks.ToString();
+        AutoUpdaterDotNET.AutoUpdater.Start($"https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/updates.xml?v={cacheBuster}");
 
         var completed = await Task.WhenAny(tcs.Task, Task.Delay(10000));
         if (completed != tcs.Task || updateInfo == null || updateInfo.Error != null)
@@ -300,15 +314,15 @@ public partial class MainForm : Form
         if (result != DialogResult.Yes) return;
 
         // Open the changelog URL in the browser
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = updateInfo.ChangelogURL,
-                UseShellExecute = true
-            });
-        }
-        catch { }
+        //try
+        //{
+        //    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        //    {
+        //        FileName = updateInfo.ChangelogURL,
+        //        UseShellExecute = true
+        //    });
+        //}
+        //catch { }
 
         // ── Show progress bar while downloading ──
         string tempInstaller = Path.Combine(Path.GetTempPath(), "soa-printing-cemetery.exe");
@@ -373,8 +387,14 @@ public partial class MainForm : Form
         // ── Silently run installer ──
         try
         {
+            Properties.Settings.Default.ShowChangelogOnNextStart = true;
+            Properties.Settings.Default.Save();
+
+            // 👇 CRITICAL: Wait 500ms so Windows finishes writing the settings file to disk
+            await Task.Delay(500);
+
             //string args = "/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART";
-            string args = "/SILENT /NORESTART";
+            string args = "/VERYSILENT /NORESTART";
 
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
@@ -398,10 +418,11 @@ public partial class MainForm : Form
     {
         tabBlocks.Visible = false;
         toolStripButtonImportExcel.Visible = false;
-        toolStripTextBoxSearch.Visible = false;
-        toolStripButtonClear.Visible = false;
+        toolStripTextBoxSearch.Enabled = false;
+        toolStripButtonClear.Enabled = false;
         toolStripMenuItemBlockFilter.Enabled = false;
         toolStripSplitButtonExport.Enabled = false;
+        toolStripComboBoxSearchColumn.Enabled = false;
 
         lblStatus.Text = "Cached records cleared.";
 
@@ -481,8 +502,8 @@ public partial class MainForm : Form
         // 2) Show the tabs and toolbar button again
         tabBlocks.Visible = true;
         toolStripButtonImportExcel.Visible = true;
-        toolStripTextBoxSearch.Visible = true;
-        toolStripButtonClear.Visible = true;
+        toolStripTextBoxSearch.Enabled = true;
+        toolStripButtonClear.Enabled = true;
     }
     #endregion
     #region DATAGRIDVIEW...
@@ -782,6 +803,7 @@ public partial class MainForm : Form
         toolStripButtonImportExcel.Enabled = false;
         toolStripSplitButtonExport.Enabled = false;
         toolStripMenuItemExportSelected.Enabled = false;
+        toolStripComboBoxSearchColumn.Enabled = false;
 
         try
         {
@@ -916,6 +938,7 @@ public partial class MainForm : Form
             toolStripButtonImportExcel.Enabled = _accounts.Count > 0;
             toolStripSplitButtonExport.Enabled = _accounts.Count > 0;
             toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;
+            toolStripComboBoxSearchColumn.Enabled = _accounts.Count > 0;
         }
     }
     private static int ExtractBlockNumber(string name)
@@ -1220,6 +1243,7 @@ public partial class MainForm : Form
         toolStripButtonImportExcel.Enabled = false;
         toolStripSplitButtonExport.Enabled = false;
         toolStripMenuItemBlockFilter.Enabled = false;
+        toolStripComboBoxSearchColumn.Enabled = false;
         //toolStripMenuItemExportSelected.Enabled = false;   // ← add this
         //toolStripMenuItemBlockFilter.Enabled = false;
 
@@ -1328,6 +1352,7 @@ public partial class MainForm : Form
         toolStripButtonImportExcel.Enabled = _accounts.Count > 0;
         toolStripSplitButtonExport.Enabled = _accounts.Count > 0;
         toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
+        toolStripComboBoxSearchColumn.Enabled = _accounts.Count > 0;
         //toolStripMenuItemExportSelected.Enabled = _accounts.Count > 0;
         //toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
 
@@ -2270,7 +2295,7 @@ public partial class MainForm : Form
         toolStripButtonImportExcel.Enabled = _accounts.Count > 0;
         toolStripMenuItemBlockFilter.Enabled = _accounts.Count > 0;
         toolStripSplitButtonExport.Enabled = _accounts.Count > 0;
-
+        toolStripComboBoxSearchColumn.Enabled = _accounts.Count > 0;
 
         lblStatus.Text = $"Loaded {_accounts.Count} cached record(s) from previous session.{(_skipZeroTotal ? " (skipped ₱0.00)" : "")}";
 
@@ -2365,10 +2390,19 @@ public partial class MainForm : Form
 
     private void whatsNewToolStripMenuItem_Click(object sender, EventArgs e)
     {
-        string changelogUrl = "https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/changelog.html";
+        ShowWhatsNewForm();
+    }
 
-        using var dlg = new WhatsNewForm(changelogUrl);
-        dlg.ShowDialog(this);
+    private void ShowWhatsNewForm()
+    {
+        try
+        {
+            string changelogUrl = "https://raw.githubusercontent.com/ArJayEm/SOAPublicCemeteryLotRental/refs/heads/master/Updates/changelog.html";
+
+            using var dlg = new WhatsNewForm(changelogUrl);
+            dlg.ShowDialog(this);
+        }
+        catch { /* Ignore errors so it doesn't block startup */ }
     }
 
     private async void toolStripComboBoxSearchColumn_SelectedIndexChanged(object sender, EventArgs e)

@@ -233,7 +233,6 @@ partial class MainForm
         toolStripTextBoxSearch.Name = "toolStripTextBoxSearch";
         toolStripTextBoxSearch.Size = new Size(200, 28);
         toolStripTextBoxSearch.ToolTipText = "Search List";
-        toolStripTextBoxSearch.Visible = false;
         toolStripTextBoxSearch.Enter += toolStripTextBoxSearch_Enter;
         toolStripTextBoxSearch.Leave += toolStripTextBoxSearch_Leave;
         toolStripTextBoxSearch.TextChanged += toolStripTextBoxSearch_TextChanged;
